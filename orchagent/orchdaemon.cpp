@@ -369,6 +369,12 @@ bool OrchDaemon::init()
 
     m_orchList.push_back(&CounterCheckOrch::getInstance(m_configDb));
 
+    vector<string> error_monitor_tables = {
+        CFG_ERROR_MONITOR_THRESHOLD_TABLE_NAME,
+        CFG_ERROR_MONITOR_INTERVAL_TABLE_NAME
+    };
+    m_orchList.push_back(new ErrorMonitorOrch(m_configDb, error_monitor_tables));
+
     if (WarmStart::isWarmStart())
     {
         bool suc = warmRestoreAndSyncUp();

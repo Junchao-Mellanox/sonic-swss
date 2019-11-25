@@ -28,6 +28,7 @@
 #include "watermarkorch.h"
 #include "policerorch.h"
 #include "sfloworch.h"
+#include "errormonitororch.h"
 #include "directory.h"
 
 using namespace swss;

@@ -54,7 +54,8 @@ orchagent_SOURCES = \
             watermarkorch.cpp \
             policerorch.cpp \
             sfloworch.cpp \
-            chassisorch.cpp
+            chassisorch.cpp \
+            errormonitororch.cpp
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
