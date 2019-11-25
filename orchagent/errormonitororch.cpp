@@ -172,6 +172,7 @@ void ErrorMonitorOrch::doTask(swss::SelectableTimer &timer)
         ErrorMonitorContext *context = kv.second;
         if (!gPortsOrch->getPort(context->name, port))
         {
+            SWSS_LOG_ERROR("Failed to get port object : %s", context->name.c_str());
             continue; // should not happen...
         }
 
@@ -183,7 +184,7 @@ void ErrorMonitorOrch::doTask(swss::SelectableTimer &timer)
                 portStats.data());
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to get stats of port 0x%" PRIx64 ": %d", port.m_port_id, status);
+            SWSS_LOG_ERROR("Failed to get stats of port %s: %d", context->name.c_str(), status);
             continue;
         }
 
