@@ -124,6 +124,9 @@ public:
     uint32_t  m_vnid = VNID_NONE;
     uint32_t  m_fdb_count = 0;
     uint32_t  m_up_member_count = 0;
+    std::vector<uint32_t> m_adv_speeds;
+    sai_port_interface_type_t m_interface_type;
+    std::vector<uint32_t> m_adv_interface_types;
 
     /*
      * Following two bit vectors are used to lock

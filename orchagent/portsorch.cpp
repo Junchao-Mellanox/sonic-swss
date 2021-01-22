@@ -28,6 +28,7 @@
 #include "countercheckorch.h"
 #include "notifier.h"
 #include "fdborch.h"
+#include "string_utils.h"
 
 extern sai_switch_api_t *sai_switch_api;
 extern sai_bridge_api_t *sai_bridge_api;
@@ -95,6 +96,7 @@ static map<string, sai_port_internal_loopback_mode_t> loopback_mode_map =
     { "mac", SAI_PORT_INTERNAL_LOOPBACK_MODE_MAC }
 };
 
+// Interface type map used for gearbox
 static map<string, sai_port_interface_type_t> interface_type_map =
 {
  { "none", SAI_PORT_INTERFACE_TYPE_NONE },
@@ -107,6 +109,47 @@ static map<string, sai_port_interface_type_t> interface_type_map =
  { "kr", SAI_PORT_INTERFACE_TYPE_KR },
  { "kr4", SAI_PORT_INTERFACE_TYPE_KR4 }
 };
+
+// Interface type map used for auto negotiation
+static map<string, sai_port_interface_type_t> interface_type_map_for_an =
+{
+    { "cr", SAI_PORT_INTERFACE_TYPE_CR },
+    { "cr2", SAI_PORT_INTERFACE_TYPE_CR2 },
+    { "cr4", SAI_PORT_INTERFACE_TYPE_CR4 },
+    { "sr", SAI_PORT_INTERFACE_TYPE_SR },
+    { "sr2", SAI_PORT_INTERFACE_TYPE_SR2 },
+    { "sr4", SAI_PORT_INTERFACE_TYPE_SR4 },
+    { "lr", SAI_PORT_INTERFACE_TYPE_LR },
+    { "lr4", SAI_PORT_INTERFACE_TYPE_LR4 },
+    { "kr", SAI_PORT_INTERFACE_TYPE_KR },
+    { "kr4", SAI_PORT_INTERFACE_TYPE_KR4 },
+    { "caui", SAI_PORT_INTERFACE_TYPE_CAUI },
+    { "gmii", SAI_PORT_INTERFACE_TYPE_GMII },
+    { "sfi", SAI_PORT_INTERFACE_TYPE_SFI },
+    { "xlaui", SAI_PORT_INTERFACE_TYPE_XLAUI },
+    { "kr2", SAI_PORT_INTERFACE_TYPE_KR2 },
+    { "caui4", SAI_PORT_INTERFACE_TYPE_CAUI4 },
+    { "xaui", SAI_PORT_INTERFACE_TYPE_XAUI },
+    { "xfi", SAI_PORT_INTERFACE_TYPE_XFI },
+    { "xgmii", SAI_PORT_INTERFACE_TYPE_XGMII }
+};
+
+static const std::string& getValidInterfaceTypes()
+{
+    static std::string validInterfaceTypes;
+    if (validInterfaceTypes.empty())
+    {
+        std::ostringstream oss;
+        for (auto &iter : interface_type_map_for_an)
+        {
+            oss << iter.first << " ";
+        }
+        validInterfaceTypes = oss.str();
+        swss::toupper(validInterfaceTypes);
+    }
+
+    return validInterfaceTypes;
+}
 
 const vector<sai_port_stat_t> port_stat_ids =
 {
@@ -219,8 +262,9 @@ static char* hostif_vlan_tag[] = {
  *    bridge. By design, SONiC switch starts with all bridge ports removed from
  *    default VLAN and all ports removed from .1Q bridge.
  */
-PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames) :
+PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames) :
         Orch(db, tableNames),
+        m_portStateTable(stateDb, STATE_PORT_TABLE_NAME),
         port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
         port_buffer_drop_stat_manager(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS, true),
         queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true)
@@ -1473,76 +1517,87 @@ bool PortsOrch::isSpeedSupported(const std::string& alias, sai_object_id_t port_
     // is not supported
     // Otherwise the method will return true (even if we received errors)
 
-    sai_attribute_t attr;
-    sai_status_t status;
-
-    // "Lazy" query of supported speeds for given port
-    // Once received the list will be stored in m_portSupportedSpeeds
     if (!m_portSupportedSpeeds.count(port_id))
     {
-        const auto size_guess = 25; // Guess the size which could be enough
-
-        std::vector<sai_uint32_t> speeds(size_guess);
-
-        for (int attempt = 0; attempt < 2; ++attempt) // two attempts to get our value
-        {                                             // first with the guess,
-                                                      // other with the returned value
-            attr.id = SAI_PORT_ATTR_SUPPORTED_SPEED;
-            attr.value.u32list.count = static_cast<uint32_t>(speeds.size());
-            attr.value.u32list.list = speeds.data();
-
-            status = sai_port_api->get_port_attribute(port_id, 1, &attr);
-            if (status != SAI_STATUS_BUFFER_OVERFLOW)
-            {
-                break;
-            }
-
-            speeds.resize(attr.value.u32list.count); // if our guess was wrong
-                                                     // retry with the correct value
-        }
-
-        if (status == SAI_STATUS_SUCCESS)
-        {
-                speeds.resize(attr.value.u32list.count);
-                m_portSupportedSpeeds[port_id] = speeds;
-        }
-        else
-        {
-            if (status == SAI_STATUS_BUFFER_OVERFLOW)
-            {
-                // something went wrong in SAI implementation
-                SWSS_LOG_ERROR("Failed to get supported speed list for port %s id=%" PRIx64 ". Not enough container size",
-                               alias.c_str(), port_id);
-            }
-            else if (SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
-                     SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status) ||
-                     status == SAI_STATUS_NOT_IMPLEMENTED)
-            {
-                // unable to validate speed if attribute is not supported on platform
-                // assuming input value is correct
-                SWSS_LOG_WARN("Unable to validate speed for port %s id=%" PRIx64 ". Not supported by platform",
-                              alias.c_str(), port_id);
-            }
-            else
-            {
-                SWSS_LOG_ERROR("Failed to get a list of supported speeds for port %s id=%" PRIx64 ". Error=%d",
-                               alias.c_str(), port_id, status);
-            }
-            m_portSupportedSpeeds[port_id] = {}; // use an empty list,
-                                                 // we don't want to get the port speed for this port again
-            return true; // we can't check if the speed is valid, so return true to change the speed
-        }
-
+        initPortSupportedSpeeds(alias, port_id);
     }
 
-    const PortSupportedSpeeds &supp_speeds = m_portSupportedSpeeds[port_id];
-    if (supp_speeds.size() == 0)
+    const auto &supp_speeds = m_portSupportedSpeeds[port_id];
+    if (supp_speeds.empty())
     {
         // we don't have the list for this port, so return true to change speed anyway
         return true;
     }
 
     return std::find(supp_speeds.begin(), supp_speeds.end(), speed) != supp_speeds.end();
+}
+
+void PortsOrch::getPortSupportedSpeeds(const std::string& alias, sai_object_id_t port_id, PortSupportedSpeeds &supported_speeds)
+{
+    sai_attribute_t attr;
+    sai_status_t status;
+    const auto size_guess = 25; // Guess the size which could be enough
+
+    PortSupportedSpeeds speeds(size_guess);
+
+    for (int attempt = 0; attempt < 2; ++attempt) // two attempts to get our value
+    {                                             // first with the guess,
+                                                    // other with the returned value
+        attr.id = SAI_PORT_ATTR_SUPPORTED_SPEED;
+        attr.value.u32list.count = static_cast<uint32_t>(speeds.size());
+        attr.value.u32list.list = speeds.data();
+
+        status = sai_port_api->get_port_attribute(port_id, 1, &attr);
+        if (status != SAI_STATUS_BUFFER_OVERFLOW)
+        {
+            break;
+        }
+
+        speeds.resize(attr.value.u32list.count); // if our guess was wrong
+                                                    // retry with the correct value
+    }
+
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        speeds.resize(attr.value.u32list.count);
+        supported_speeds.swap(speeds);
+    }
+    else
+    {
+        if (status == SAI_STATUS_BUFFER_OVERFLOW)
+        {
+            // something went wrong in SAI implementation
+            SWSS_LOG_ERROR("Failed to get supported speed list for port %s id=%" PRIx64 ". Not enough container size",
+                            alias.c_str(), port_id);
+        }
+        else if (SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
+                    SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status) ||
+                    status == SAI_STATUS_NOT_IMPLEMENTED)
+        {
+            // unable to validate speed if attribute is not supported on platform
+            // assuming input value is correct
+            SWSS_LOG_WARN("Unable to validate speed for port %s id=%" PRIx64 ". Not supported by platform",
+                            alias.c_str(), port_id);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to get a list of supported speeds for port %s id=%" PRIx64 ". Error=%d",
+                            alias.c_str(), port_id, status);
+        }
+
+        supported_speeds.clear(); // return empty
+    }
+}
+
+void PortsOrch::initPortSupportedSpeeds(const std::string& alias, sai_object_id_t port_id)
+{
+    PortSupportedSpeeds supported_speeds;
+    getPortSupportedSpeeds(alias, port_id, supported_speeds);
+    m_portSupportedSpeeds[port_id] = supported_speeds;
+    vector<FieldValueTuple> v;
+    std::string supported_speeds_str = swss::join(supported_speeds, ",");
+    v.emplace_back(std::make_pair("supported_speeds", supported_speeds_str));
+    m_portStateTable.set(alias, v);
 }
 
 /*
@@ -1693,17 +1748,44 @@ bool PortsOrch::getPortSpeed(sai_object_id_t id, sai_uint32_t &speed)
     return status == SAI_STATUS_SUCCESS;
 }
 
-bool PortsOrch::setPortAdvSpeed(sai_object_id_t port_id, sai_uint32_t speed)
+bool PortsOrch::setPortAdvSpeeds(sai_object_id_t port_id, std::vector<sai_uint32_t>& speed_list)
 {
     SWSS_LOG_ENTER();
     sai_attribute_t attr;
     sai_status_t status;
-    vector<sai_uint32_t> speeds;
-    speeds.push_back(speed);
 
     attr.id = SAI_PORT_ATTR_ADVERTISED_SPEED;
-    attr.value.u32list.list  = speeds.data();
-    attr.value.u32list.count = static_cast<uint32_t>(speeds.size());
+    attr.value.u32list.list  = speed_list.data();
+    attr.value.u32list.count = static_cast<uint32_t>(speed_list.size());
+
+    status = sai_port_api->set_port_attribute(port_id, &attr);
+
+    return status == SAI_STATUS_SUCCESS;
+}
+
+bool PortsOrch::setPortInterfaceType(sai_object_id_t port_id, sai_port_interface_type_t interface_type)
+{
+    SWSS_LOG_ENTER();
+    sai_attribute_t attr;
+    sai_status_t status;
+
+    attr.id = SAI_PORT_ATTR_INTERFACE_TYPE;
+    attr.value.u32 = static_cast<uint32_t>(interface_type);
+
+    status = sai_port_api->set_port_attribute(port_id, &attr);
+
+    return status == SAI_STATUS_SUCCESS;
+}
+
+bool PortsOrch::setPortAdvInterfaceTypes(sai_object_id_t port_id, std::vector<uint32_t> &interface_types)
+{
+    SWSS_LOG_ENTER();
+    sai_attribute_t attr;
+    sai_status_t status;
+
+    attr.id = SAI_PORT_ATTR_ADVERTISED_INTERFACE_TYPE;
+    attr.value.u32list.list  = interface_types.data();
+    attr.value.u32list.count = static_cast<uint32_t>(interface_types.size());
 
     status = sai_port_api->set_port_attribute(port_id, &attr);
 
@@ -2150,8 +2232,15 @@ void PortsOrch::doPortTask(Consumer &consumer)
             uint32_t mtu = 0;
             uint32_t speed = 0;
             string learn_mode;
-            int an = -1;
+            int an = 1;
             int index = -1;
+            bool an_changed = false;
+            string adv_speeds_str;
+            string interface_type_str;
+            string adv_interface_types_str;
+            vector<uint32_t> adv_speeds;
+            sai_port_interface_type_t interface_type;
+            vector<uint32_t> adv_interface_types;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -2212,7 +2301,33 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 /* Set autoneg and ignore the port speed setting */
                 if (fvField(i) == "autoneg")
                 {
-                    an = (int)stoul(fvValue(i));
+                    try 
+                    {
+                        an = (int)stoul(fvValue(i));
+                    }
+                    catch(const std::invalid_argument &e)
+                    {
+                        SWSS_LOG_ERROR("Failed to parse autoneg value: %s", fvValue(i).c_str());
+                        an = -1;
+                    }
+                }
+
+                /* Set advertised speeds */
+                if (fvField(i) == "adv_speeds")
+                {
+                    adv_speeds_str = fvValue(i);
+                }
+
+                /* Set interface type */
+                if (fvField(i) == "interface_type")
+                {
+                    interface_type_str = fvValue(i);
+                }
+
+                /* Set advertised interface type */
+                if (fvField(i) == "adv_interface_types")
+                {
+                    adv_interface_types_str = fvValue(i);
                 }
 
                 /* Set port serdes Pre-emphasis */
@@ -2283,6 +2398,10 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     {
                         throw runtime_error("PortsOrch initialization failure.");
                     }
+                    else
+                    {
+                        initPortSupportedSpeeds(get<0>(it->second), m_portListLaneMap[lane_set]);
+                    }
 
                     it++;
                 }
@@ -2322,29 +2441,14 @@ void PortsOrch::doPortTask(Consumer &consumer)
             }
             else
             {
-                if (an != -1 && an != p.m_autoneg)
+                if (an!= -1 && an != p.m_autoneg)
                 {
                     if (setPortAutoNeg(p.m_port_id, an))
                     {
                         SWSS_LOG_NOTICE("Set port %s AutoNeg to %u", alias.c_str(), an);
+                        an_changed = true;
                         p.m_autoneg = an;
                         m_portList[alias] = p;
-
-                        // Once AN is changed
-                        // - no speed specified: need to reapply the port speed or port adv speed accordingly
-                        // - speed specified: need to apply the port speed or port adv speed by the specified one
-                        // Note: one special case is
-                        // - speed specified as existing m_speed: need to apply even they are the same
-                        auto old_speed = p.m_speed;
-                        p.m_speed = 0;
-                        auto new_speed = speed ? speed : old_speed;
-                        if (new_speed)
-                        {
-                            // Modify the task in place
-                            kfvFieldsValues(t).emplace_back("speed", to_string(new_speed));
-                            // Fallthrough to process `speed'
-                            speed = new_speed;
-                        }
                     }
                     else
                     {
@@ -2354,82 +2458,136 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                 }
 
-                /*
-                 * When AN is enabled, set the port adv speed, otherwise change the port speed.
-                 *
-                 * 1. Get supported speed list and validate if the target speed is within the list
-                 * 2. Get the current port speed and check if it is the same as the target speed
-                 * 3. Set port admin status to DOWN before changing the speed
-                 * 4. Set port speed
-                 */
-
-                SWSS_LOG_DEBUG("Set port %s speed to %u -> %u", alias.c_str(), p.m_speed, speed);
-                if (speed != 0)
+                if (!adv_speeds_str.empty())
                 {
-                    if (speed != p.m_speed)
+                    swss::tolower(adv_speeds_str);
+                    if (!getPortAdvSpeedsVal(adv_speeds_str, adv_speeds))
                     {
-                        m_portList[alias] = p;
+                        it++;
+                        continue;
+                    }
+                }
 
-                        if (p.m_autoneg)
+                if (!interface_type_str.empty())
+                {
+                    swss::tolower(interface_type_str);
+                    if (!getPortInterfaceTypeVal(interface_type_str, interface_type))
+                    {
+                        it++;
+                        continue;
+                    }
+                }
+                else
+                {
+                    interface_type = SAI_PORT_INTERFACE_TYPE_NONE;
+                }
+
+                if (!adv_interface_types_str.empty())
+                {
+                    swss::tolower(adv_interface_types_str);
+                    if (!getPortAdvInterfaceTypesVal(adv_interface_types_str, adv_interface_types))
+                    {
+                        it++;
+                        continue;
+                    }
+                }
+
+                if (p.m_autoneg)
+                {
+                    if (an_changed || adv_speeds != p.m_adv_speeds)
+                    {
+                        if (!setPortAdvSpeeds(p.m_port_id, adv_speeds))
                         {
-                            if (setPortAdvSpeed(p.m_port_id, speed))
+                            SWSS_LOG_ERROR("Failed to set port %s advertised speed to %s", alias.c_str(), adv_speeds_str.c_str());
+                            it++;
+                            continue;
+                        }
+                        SWSS_LOG_NOTICE("Set port %s advertised speed to %s", alias.c_str(), adv_speeds_str.c_str());
+                        p.m_adv_speeds.swap(adv_speeds);
+                        m_portList[alias] = p;
+                    }
+
+                    if (an_changed || adv_interface_types != p.m_adv_interface_types)
+                    {
+                        if (!setPortAdvInterfaceTypes(p.m_port_id, adv_interface_types))
+                        {
+                            SWSS_LOG_ERROR("Failed to set port %s advertised interface type to %s", alias.c_str(), adv_interface_types_str.c_str());
+                            it++;
+                            continue;
+                        }
+
+                        SWSS_LOG_NOTICE("Set port %s advertised interface type to %s", alias.c_str(), adv_interface_types_str.c_str());
+                        p.m_adv_interface_types.swap(adv_interface_types);
+                        m_portList[alias] = p;
+                    }
+
+                }
+                else // p.m_autoneg = 0
+                {
+                    if (an_changed || speed != p.m_speed)
+                    {
+                        speed = speed ? speed : p.m_speed;
+                        if (!isSpeedSupported(alias, p.m_port_id, speed))
+                        {
+                            it++;
+                            continue;
+                        }
+
+                        if (p.m_admin_state_up)
+                        {
+                            /* Bring port down before applying speed */
+                            if (!setPortAdminStatus(p, false))
                             {
-                                SWSS_LOG_NOTICE("Set port %s advertised speed to %u", alias.c_str(), speed);
-                            }
-                            else
-                            {
-                                SWSS_LOG_ERROR("Failed to set port %s advertised speed to %u", alias.c_str(), speed);
+                                SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to set speed", alias.c_str());
                                 it++;
                                 continue;
                             }
+
+                            p.m_admin_state_up = false;
+                            m_portList[alias] = p;
                         }
-                        else
+
+                        if (!setPortSpeed(p, speed))
                         {
-                            if (!isSpeedSupported(alias, p.m_port_id, speed))
-                            {
-                                it++;
-                                continue;
-                            }
-
-                            if (p.m_admin_state_up)
-                            {
-                                /* Bring port down before applying speed */
-                                if (!setPortAdminStatus(p, false))
-                                {
-                                    SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to set speed", alias.c_str());
-                                    it++;
-                                    continue;
-                                }
-
-                                p.m_admin_state_up = false;
-                                m_portList[alias] = p;
-
-                                if (!setPortSpeed(p, speed))
-                                {
-                                    SWSS_LOG_ERROR("Failed to set port %s speed to %u", alias.c_str(), speed);
-                                    it++;
-                                    continue;
-                                }
-                            }
-                            else
-                            {
-                                /* Port is already down, setting speed */
-                                if (!setPortSpeed(p, speed))
-                                {
-                                    SWSS_LOG_ERROR("Failed to set port %s speed to %u", alias.c_str(), speed);
-                                    it++;
-                                    continue;
-                                }
-                            }
-                            SWSS_LOG_NOTICE("Set port %s speed to %u", alias.c_str(), speed);
+                            SWSS_LOG_ERROR("Failed to set port %s speed to %u", alias.c_str(), speed);
+                            it++;
+                            continue;
                         }
-                        p.m_speed = speed;
-                        m_portList[alias] = p;
+ 
+                        SWSS_LOG_NOTICE("Set port %s speed to %u", alias.c_str(), speed);
                     }
                     else
                     {
                         /* Always update Gearbox speed on Gearbox ports */
                         setGearboxPortsAttr(p, SAI_PORT_ATTR_SPEED, &speed);
+                    }
+
+                    if (an_changed || interface_type != p.m_interface_type)
+                    {
+                        if (p.m_admin_state_up)
+                        {
+                            /* Bring port down before applying speed */
+                            if (!setPortAdminStatus(p, false))
+                            {
+                                SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to set interface type", alias.c_str());
+                                it++;
+                                continue;
+                            }
+
+                            p.m_admin_state_up = false;
+                            m_portList[alias] = p;
+                        }
+
+                        if (!setPortInterfaceType(p.m_port_id, interface_type))
+                        {
+                            SWSS_LOG_ERROR("Failed to set port %s interface type to %s", alias.c_str(), interface_type_str.c_str());
+                            it++;
+                            continue;
+                        }
+
+                        SWSS_LOG_NOTICE("Set port %s interface type to %s", alias.c_str(), interface_type_str.c_str());
+                        p.m_interface_type = interface_type;
+                        m_portList[alias] = p;
                     }
                 }
 
@@ -4463,6 +4621,86 @@ void PortsOrch::getPortSerdesVal(const std::string& val_str,
         lane_val = (uint32_t)std::stoul(lane_str, NULL, 16);
         lane_values.push_back(lane_val);
     }
+}
+
+bool PortsOrch::getPortAdvSpeedsVal(const std::string &val_str, 
+                                    std::vector<uint32_t> &speed_values)
+{
+    SWSS_LOG_ENTER();
+
+    if (val_str == "all")
+    {
+        return true;
+    }
+
+    uint32_t speed_val;
+    std::string speed_str;
+    std::istringstream iss(val_str);
+
+    try 
+    {
+        while (std::getline(iss, speed_str, ','))
+        {
+            speed_val = (uint32_t)std::stoul(speed_str);
+            speed_values.push_back(speed_val);
+        }
+    }
+    catch (const std::invalid_argument &e)
+    {
+        SWSS_LOG_ERROR("Failed to parse adv_speeds value: %s", val_str.c_str());
+        return false;
+    }
+    std::sort(speed_values.begin(), speed_values.end());
+    return true;
+}
+
+bool PortsOrch::getPortInterfaceTypeVal(const std::string &s, 
+                                        sai_port_interface_type_t &interface_type)
+{
+    SWSS_LOG_ENTER();
+
+    auto iter = interface_type_map_for_an.find(s);
+    if (iter != interface_type_map_for_an.end()) 
+    {
+        interface_type = interface_type_map_for_an[s];
+        return true;
+    }
+    else 
+    {
+        const std::string &validInterfaceTypes = getValidInterfaceTypes();
+        SWSS_LOG_ERROR("Failed to parse interface_type value %s, valid interface type includes: %s", 
+                       s.c_str(), validInterfaceTypes.c_str());
+        return false;
+    }
+}
+
+bool PortsOrch::getPortAdvInterfaceTypesVal(const std::string &val_str, 
+                                            std::vector<uint32_t> &type_values)
+{
+    SWSS_LOG_ENTER();
+    if (val_str == "all") 
+    {
+        return true;
+    }
+
+    sai_port_interface_type_t interface_type ;
+    std::string type_str;
+    std::istringstream iss(val_str);
+    bool valid;
+
+    while (std::getline(iss, type_str, ','))
+    {
+        valid = getPortInterfaceTypeVal(type_str, interface_type);
+        if (!valid) {
+            const std::string &validInterfaceTypes = getValidInterfaceTypes();
+            SWSS_LOG_ERROR("Failed to parse adv_interface_types value %s, valid interface type includes: %s", 
+                           val_str.c_str(), validInterfaceTypes.c_str());
+            return false;
+        }
+        type_values.push_back(static_cast<uint32_t>(interface_type));
+    }
+    std::sort(type_values.begin(), type_values.end());
+    return true;
 }
 
 /* Bring up/down Vlan interface associated with L3 VNI*/

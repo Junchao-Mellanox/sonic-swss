@@ -314,7 +314,7 @@ namespace aclorch_test
             };
 
             ASSERT_EQ(gPortsOrch, nullptr);
-            gPortsOrch = new PortsOrch(m_app_db.get(), ports_tables);
+            gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables);
 
             ASSERT_EQ(gCrmOrch, nullptr);
             gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);

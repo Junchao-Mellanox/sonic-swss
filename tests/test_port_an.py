@@ -7,7 +7,6 @@ from swsscommon import swsscommon
 
 class TestPortAutoNeg(object):
     def test_PortAutoNegCold(self, dvs, testlog):
-
         db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
 
         tbl = swsscommon.ProducerStateTable(db, "PORT_TABLE")
