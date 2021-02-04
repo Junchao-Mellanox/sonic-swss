@@ -227,22 +227,6 @@ class TestPortAutoNeg(object):
             elif fv[0] == "SAI_PORT_ATTR_ADVERTISED_INTERFACE_TYPE":
                 assert fv[1] == "2:SAI_PORT_INTERFACE_TYPE_CR2,SAI_PORT_INTERFACE_TYPE_CR4"
 
-        # set speed = 100
-        fvs = swsscommon.FieldValuePairs([("speed", "100")])
-
-        ctbl.set("Ethernet0", fvs)
-
-        time.sleep(1)
-
-        (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet0"])
-        assert status == True
-
-        for fv in fvs:
-            if fv[0] == "SAI_PORT_ATTR_AUTO_NEG_MODE":
-                assert fv[1] == "true"
-            elif fv[0] == "SAI_PORT_ATTR_ADVERTISED_SPEED":
-                assert fv[1] == "1:100"
-
         # set admin up
         cfvs = swsscommon.FieldValuePairs([("admin_status", "up")])
         ctbl.set("Ethernet0", cfvs)
