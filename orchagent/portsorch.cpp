@@ -28,7 +28,7 @@
 #include "countercheckorch.h"
 #include "notifier.h"
 #include "fdborch.h"
-#include "string_utils.h"
+#include "stringutility.h"
 
 extern sai_switch_api_t *sai_switch_api;
 extern sai_bridge_api_t *sai_bridge_api;
@@ -1595,7 +1595,7 @@ void PortsOrch::initPortSupportedSpeeds(const std::string& alias, sai_object_id_
     getPortSupportedSpeeds(alias, port_id, supported_speeds);
     m_portSupportedSpeeds[port_id] = supported_speeds;
     vector<FieldValueTuple> v;
-    std::string supported_speeds_str = swss::join(supported_speeds, ",");
+    std::string supported_speeds_str = swss::join(",", supported_speeds);
     v.emplace_back(std::make_pair("supported_speeds", supported_speeds_str));
     m_portStateTable.set(alias, v);
 }
@@ -2232,9 +2232,8 @@ void PortsOrch::doPortTask(Consumer &consumer)
             uint32_t mtu = 0;
             uint32_t speed = 0;
             string learn_mode;
-            int an = 1;
+            int an = -1;
             int index = -1;
-            bool an_changed = false;
             string adv_speeds_str;
             string interface_type_str;
             string adv_interface_types_str;
@@ -2400,7 +2399,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                     else
                     {
-                        initPortSupportedSpeeds(get<0>(it->second), m_portListLaneMap[lane_set]);
+                        initPortSupportedSpeeds(get<0>(it->second), m_portListLaneMap[it->first]);
                     }
 
                     it++;
@@ -2441,14 +2440,43 @@ void PortsOrch::doPortTask(Consumer &consumer)
             }
             else
             {
-                if (an!= -1 && an != p.m_autoneg)
+                if (an != -1 && an != p.m_autoneg)
                 {
+                    if (p.m_admin_state_up)
+                    {
+                        /* Bring port down before applying speed */
+                        if (!setPortAdminStatus(p, false))
+                        {
+                            SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to set interface type", alias.c_str());
+                            it++;
+                            continue;
+                        }
+
+                        p.m_admin_state_up = false;
+                        m_portList[alias] = p;
+                    }
+
                     if (setPortAutoNeg(p.m_port_id, an))
                     {
                         SWSS_LOG_NOTICE("Set port %s AutoNeg to %u", alias.c_str(), an);
-                        an_changed = true;
                         p.m_autoneg = an;
                         m_portList[alias] = p;
+
+                        // Once AN is changed
+                        // - no speed specified: need to reapply the port speed or port adv speed accordingly
+                        // - speed specified: need to apply the port speed or port adv speed by the specified one
+                        // Note: one special case is
+                        // - speed specified as existing m_speed: need to apply even they are the same
+                        auto old_speed = p.m_speed;
+                        p.m_speed = 0;
+                        auto new_speed = speed ? speed : old_speed;
+                        if (new_speed)
+                        {
+                            // Modify the task in place
+                            kfvFieldsValues(t).emplace_back("speed", to_string(new_speed));
+                            // Fallthrough to process `speed'
+                            speed = new_speed;
+                        }
                     }
                     else
                     {
@@ -2466,35 +2494,22 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         it++;
                         continue;
                     }
-                }
 
-                if (!interface_type_str.empty())
-                {
-                    swss::tolower(interface_type_str);
-                    if (!getPortInterfaceTypeVal(interface_type_str, interface_type))
+                    if (p.m_admin_state_up)
                     {
-                        it++;
-                        continue;
-                    }
-                }
-                else
-                {
-                    interface_type = SAI_PORT_INTERFACE_TYPE_NONE;
-                }
+                        /* Bring port down before applying speed */
+                        if (!setPortAdminStatus(p, false))
+                        {
+                            SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to set interface type", alias.c_str());
+                            it++;
+                            continue;
+                        }
 
-                if (!adv_interface_types_str.empty())
-                {
-                    swss::tolower(adv_interface_types_str);
-                    if (!getPortAdvInterfaceTypesVal(adv_interface_types_str, adv_interface_types))
-                    {
-                        it++;
-                        continue;
+                        p.m_admin_state_up = false;
+                        m_portList[alias] = p;
                     }
-                }
 
-                if (p.m_autoneg)
-                {
-                    if (an_changed || adv_speeds != p.m_adv_speeds)
+                    if (adv_speeds != p.m_adv_speeds)
                     {
                         if (!setPortAdvSpeeds(p.m_port_id, adv_speeds))
                         {
@@ -2506,63 +2521,18 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         p.m_adv_speeds.swap(adv_speeds);
                         m_portList[alias] = p;
                     }
-
-                    if (an_changed || adv_interface_types != p.m_adv_interface_types)
-                    {
-                        if (!setPortAdvInterfaceTypes(p.m_port_id, adv_interface_types))
-                        {
-                            SWSS_LOG_ERROR("Failed to set port %s advertised interface type to %s", alias.c_str(), adv_interface_types_str.c_str());
-                            it++;
-                            continue;
-                        }
-
-                        SWSS_LOG_NOTICE("Set port %s advertised interface type to %s", alias.c_str(), adv_interface_types_str.c_str());
-                        p.m_adv_interface_types.swap(adv_interface_types);
-                        m_portList[alias] = p;
-                    }
-
                 }
-                else // p.m_autoneg = 0
+
+                if (!interface_type_str.empty())
                 {
-                    if (an_changed || speed != p.m_speed)
+                    swss::tolower(interface_type_str);
+                    if (!getPortInterfaceTypeVal(interface_type_str, interface_type))
                     {
-                        speed = speed ? speed : p.m_speed;
-                        if (!isSpeedSupported(alias, p.m_port_id, speed))
-                        {
-                            it++;
-                            continue;
-                        }
-
-                        if (p.m_admin_state_up)
-                        {
-                            /* Bring port down before applying speed */
-                            if (!setPortAdminStatus(p, false))
-                            {
-                                SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to set speed", alias.c_str());
-                                it++;
-                                continue;
-                            }
-
-                            p.m_admin_state_up = false;
-                            m_portList[alias] = p;
-                        }
-
-                        if (!setPortSpeed(p, speed))
-                        {
-                            SWSS_LOG_ERROR("Failed to set port %s speed to %u", alias.c_str(), speed);
-                            it++;
-                            continue;
-                        }
- 
-                        SWSS_LOG_NOTICE("Set port %s speed to %u", alias.c_str(), speed);
-                    }
-                    else
-                    {
-                        /* Always update Gearbox speed on Gearbox ports */
-                        setGearboxPortsAttr(p, SAI_PORT_ATTR_SPEED, &speed);
+                        it++;
+                        continue;
                     }
 
-                    if (an_changed || interface_type != p.m_interface_type)
+                    if (interface_type != p.m_interface_type)
                     {
                         if (p.m_admin_state_up)
                         {
@@ -2591,6 +2561,85 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                 }
 
+                if (!adv_interface_types_str.empty())
+                {
+                    swss::tolower(adv_interface_types_str);
+                    if (!getPortAdvInterfaceTypesVal(adv_interface_types_str, adv_interface_types))
+                    {
+                        it++;
+                        continue;
+                    }
+
+                    if (adv_interface_types != p.m_adv_interface_types)
+                    {
+                        if (p.m_admin_state_up)
+                        {
+                            /* Bring port down before applying speed */
+                            if (!setPortAdminStatus(p, false))
+                            {
+                                SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to set interface type", alias.c_str());
+                                it++;
+                                continue;
+                            }
+
+                            p.m_admin_state_up = false;
+                            m_portList[alias] = p;
+                        }
+
+                        if (!setPortAdvInterfaceTypes(p.m_port_id, adv_interface_types))
+                        {
+                            SWSS_LOG_ERROR("Failed to set port %s advertised interface type to %s", alias.c_str(), adv_interface_types_str.c_str());
+                            it++;
+                            continue;
+                        }
+
+                        SWSS_LOG_NOTICE("Set port %s advertised interface type to %s", alias.c_str(), adv_interface_types_str.c_str());
+                        p.m_adv_interface_types.swap(adv_interface_types);
+                        m_portList[alias] = p;
+                    }
+                }
+
+                if (speed != 0)
+                {
+                    if (speed != p.m_speed)
+                    {
+                        m_portList[alias] = p;
+                        if (!isSpeedSupported(alias, p.m_port_id, speed))
+                        {
+                            it++;
+                            continue;
+                        }
+
+                        if (p.m_admin_state_up)
+                        {
+                            /* Bring port down before applying speed */
+                            if (!setPortAdminStatus(p, false))
+                            {
+                                SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to set speed", alias.c_str());
+                                it++;
+                                continue;
+                            }
+
+                            p.m_admin_state_up = false;
+                            m_portList[alias] = p;
+                        }
+
+                        if (!setPortSpeed(p, speed))
+                        {
+                            SWSS_LOG_ERROR("Failed to set port %s speed to %u", alias.c_str(), speed);
+                            it++;
+                            continue;
+                        }
+
+                        SWSS_LOG_NOTICE("Set port %s speed to %u", alias.c_str(), speed);
+                    }
+                    else
+                    {
+                        /* Always update Gearbox speed on Gearbox ports */
+                        setGearboxPortsAttr(p, SAI_PORT_ATTR_SPEED, &speed);
+                    }
+                }
+                
                 if (mtu != 0 && mtu != p.m_mtu)
                 {
                     if (setPortMtu(p.m_port_id, mtu))
