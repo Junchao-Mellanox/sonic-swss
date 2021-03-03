@@ -23,6 +23,8 @@ extern sai_route_api_t *sai_route_api;
 extern sai_next_hop_group_api_t* sai_next_hop_group_api;
 extern string gMySwitchType;
 
+using namespace saimeta;
+
 namespace aclorch_test
 {
     using namespace std;
@@ -104,6 +106,7 @@ namespace aclorch_test
         auto v = vector<swss::FieldValueTuple>(
             { { "SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST", "2:SAI_ACL_BIND_POINT_TYPE_PORT,SAI_ACL_BIND_POINT_TYPE_LAG" },
               { "SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE", "true" },
+              { "SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID", "true" },
               { "SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE", "true" },
               { "SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL", "true" },
               { "SAI_ACL_TABLE_ATTR_FIELD_SRC_IP", "true" },
@@ -114,7 +117,7 @@ namespace aclorch_test
               { "SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT", "true" },
               { "SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS", "true" },
               { "SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE", "2:SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE,SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE" },
-              { "SAI_ACL_TABLE_ATTR_ACL_STAGE", "SAI_ACL_STAGE_INGRESS" } });
+              { "SAI_ACL_TABLE_ATTR_ACL_STAGE", "SAI_ACL_STAGE_INGRESS" }});
         SaiAttributeList attr_list(SAI_OBJECT_TYPE_ACL_TABLE, v, false);
 
         ASSERT_TRUE(Check::AttrListEq(SAI_OBJECT_TYPE_ACL_TABLE, res->attr_list, attr_list));
@@ -418,8 +421,8 @@ namespace aclorch_test
             vector<swss::FieldValueTuple> fields;
 
             fields.push_back({ "SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST", "2:SAI_ACL_BIND_POINT_TYPE_PORT,SAI_ACL_BIND_POINT_TYPE_LAG" });
+            fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID", "true" });
             fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE", "true" });
-
             fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT", "true" });
             fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT", "true" });
             fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS", "true" });
@@ -831,13 +834,13 @@ namespace aclorch_test
                 }
                 else
                 {
-                    // unkonw attr_value
+                    // unknown attr_value
                     return false;
                 }
             }
             else
             {
-                // unknow attr_name
+                // unknown attr_name
                 return false;
             }
 
@@ -894,7 +897,7 @@ namespace aclorch_test
             }
             else
             {
-                // unknow attr_name
+                // unknown attr_name
                 return false;
             }
 
@@ -924,7 +927,7 @@ namespace aclorch_test
                 }
                 else
                 {
-                    // unknow attr_name
+                    // unknown attr_name
                     return false;
                 }
             }
@@ -997,7 +1000,7 @@ namespace aclorch_test
     // When received ACL rule DEL_COMMAND, orchagent can delete corresponding ACL rule.
     //
     // Verify ACL table type = { L3 }, stage = { INGRESS, ENGRESS }
-    // Input by matchs = { SIP, DIP ...}, pkg:actions = { FORWARD, DROP ... }
+    // Input by matches = { SIP, DIP ...}, pkg:actions = { FORWARD, DROP ... }
     //
     TEST_F(AclOrchTest, L3Acl_Matches_Actions)
     {
@@ -1087,7 +1090,7 @@ namespace aclorch_test
     // When received ACL rule DEL_COMMAND, orchagent can delete corresponding ACL rule.
     //
     // Verify ACL table type = { L3V6 }, stage = { INGRESS, ENGRESS }
-    // Input by matchs = { SIP, DIP ...}, pkg:actions = { FORWARD, DROP ... }
+    // Input by matches = { SIP, DIP ...}, pkg:actions = { FORWARD, DROP ... }
     //
     TEST_F(AclOrchTest, L3V6Acl_Matches_Actions)
     {

@@ -22,7 +22,7 @@
 #define QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_STAT_COUNTER"
 #define QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_WATERMARK_STAT_COUNTER"
 #define PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "PG_WATERMARK_STAT_COUNTER"
-
+#define PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP "PG_DROP_STAT_COUNTER"
 
 typedef std::vector<sai_uint32_t> PortSupportedSpeeds;
 
@@ -155,16 +155,19 @@ private:
     unique_ptr<Table> m_pgTable;
     unique_ptr<Table> m_pgPortTable;
     unique_ptr<Table> m_pgIndexTable;
+    unique_ptr<Table> m_stateBufferMaximumValueTable;
     unique_ptr<ProducerTable> m_flexCounterTable;
     unique_ptr<ProducerTable> m_flexCounterGroupTable;
     Table m_portStateTable;
 
     std::string getQueueWatermarkFlexCounterTableKey(std::string s);
     std::string getPriorityGroupWatermarkFlexCounterTableKey(std::string s);
+    std::string getPriorityGroupDropPacketsFlexCounterTableKey(std::string s);
     std::string getPortRateFlexCounterTableKey(std::string s);
 
     shared_ptr<DBConnector> m_counter_db;
     shared_ptr<DBConnector> m_flex_db;
+    shared_ptr<DBConnector> m_state_db;
 
     FlexCounterManager port_stat_manager;
     FlexCounterManager port_buffer_drop_stat_manager;
@@ -227,6 +230,7 @@ private:
 
     bool initializePort(Port &port);
     void initializePriorityGroups(Port &port);
+    void initializePortMaximumHeadroom(Port &port);
     void initializeQueues(Port &port);
 
     bool addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id);
@@ -291,8 +295,12 @@ private:
     bool getPortInterfaceTypeVal(const std::string &s, sai_port_interface_type_t &interface_type);
     bool getPortAdvInterfaceTypesVal(const std::string &s, std::vector<uint32_t> &type_values);
 
-    bool setPortSerdesAttribute(sai_object_id_t port_id, sai_attr_id_t attr_id,
-                                vector<uint32_t> &serdes_val);
+    bool setPortSerdesAttribute(sai_object_id_t port_id,
+                                std::map<sai_port_serdes_attr_t, std::vector<uint32_t>> &serdes_attr);
+
+
+    void removePortSerdesAttribute(sai_object_id_t port_id);
+
     bool getSaiAclBindPointType(Port::Type                type,
                                 sai_acl_bind_point_type_t &sai_acl_bind_type);
     void initGearbox();

@@ -127,6 +127,7 @@ public:
     std::vector<uint32_t> m_adv_speeds;
     sai_port_interface_type_t m_interface_type;
     std::vector<uint32_t> m_adv_interface_types;
+    uint32_t  m_maximum_headroom = 0;
 
     /*
      * Following two bit vectors are used to lock
