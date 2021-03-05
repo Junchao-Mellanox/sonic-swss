@@ -97,6 +97,12 @@ static map<string, sai_port_internal_loopback_mode_t> loopback_mode_map =
     { "mac", SAI_PORT_INTERNAL_LOOPBACK_MODE_MAC }
 };
 
+static map<string, int> autoneg_mode_map =
+{
+    { "on", 1 },
+    { "off", 0 }
+};
+
 // Interface type map used for gearbox
 static map<string, sai_port_interface_type_t> interface_type_map =
 {
@@ -2254,6 +2260,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
             uint32_t mtu = 0;
             uint32_t speed = 0;
             string learn_mode;
+            string an_str;
             int an = -1;
             int index = -1;
             string adv_speeds_str;
@@ -2316,15 +2323,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 /* Set autoneg and ignore the port speed setting */
                 else if (fvField(i) == "autoneg")
                 {
-                    try 
-                    {
-                        an = (int)stoul(fvValue(i));
-                    }
-                    catch(const std::invalid_argument &e)
-                    {
-                        SWSS_LOG_ERROR("Failed to parse autoneg value: %s", fvValue(i).c_str());
-                        an = -1;
-                    }
+                    an_str = fvValue(i);
                 }
 
                 /* Set advertised speeds */
@@ -2504,49 +2503,60 @@ void PortsOrch::doPortTask(Consumer &consumer)
             }
             else
             {
-                if (an != -1 && an != p.m_autoneg)
+                if (!an_str.empty())
                 {
-                    if (p.m_admin_state_up)
+                    if (autoneg_mode_map.find(an_str) == autoneg_mode_map.end())
                     {
-                        /* Bring port down before applying speed */
-                        if (!setPortAdminStatus(p, false))
+                        SWSS_LOG_ERROR("Failed to parse autoneg value: %s", an_str.c_str());
+                        it++;
+                        continue;
+                    }
+                    
+                    an = autoneg_mode_map[an_str];
+                    if (an != p.m_autoneg)
+                    {
+                        if (p.m_admin_state_up)
                         {
-                            SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to set interface type", alias.c_str());
+                            /* Bring port down before applying speed */
+                            if (!setPortAdminStatus(p, false))
+                            {
+                                SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to set port autoneg mode", alias.c_str());
+                                it++;
+                                continue;
+                            }
+
+                            p.m_admin_state_up = false;
+                            m_portList[alias] = p;
+                        }
+
+                        if (setPortAutoNeg(p.m_port_id, an))
+                        {
+                            SWSS_LOG_NOTICE("Set port %s AutoNeg to %u", alias.c_str(), an);
+                            p.m_autoneg = an;
+                            m_portList[alias] = p;
+
+                            // Once AN is changed
+                            // - no speed specified: need to reapply the port speed or port adv speed accordingly
+                            // - speed specified: need to apply the port speed or port adv speed by the specified one
+                            // Note: one special case is
+                            // - speed specified as existing m_speed: need to apply even they are the same
+                            auto old_speed = p.m_speed;
+                            p.m_speed = 0;
+                            auto new_speed = speed ? speed : old_speed;
+                            if (new_speed)
+                            {
+                                // Modify the task in place
+                                kfvFieldsValues(t).emplace_back("speed", to_string(new_speed));
+                                // Fallthrough to process `speed'
+                                speed = new_speed;
+                            }
+                        }
+                        else
+                        {
+                            SWSS_LOG_ERROR("Failed to set port %s AN to %u", alias.c_str(), an);
                             it++;
                             continue;
                         }
-
-                        p.m_admin_state_up = false;
-                        m_portList[alias] = p;
-                    }
-
-                    if (setPortAutoNeg(p.m_port_id, an))
-                    {
-                        SWSS_LOG_NOTICE("Set port %s AutoNeg to %u", alias.c_str(), an);
-                        p.m_autoneg = an;
-                        m_portList[alias] = p;
-
-                        // Once AN is changed
-                        // - no speed specified: need to reapply the port speed or port adv speed accordingly
-                        // - speed specified: need to apply the port speed or port adv speed by the specified one
-                        // Note: one special case is
-                        // - speed specified as existing m_speed: need to apply even they are the same
-                        auto old_speed = p.m_speed;
-                        p.m_speed = 0;
-                        auto new_speed = speed ? speed : old_speed;
-                        if (new_speed)
-                        {
-                            // Modify the task in place
-                            kfvFieldsValues(t).emplace_back("speed", to_string(new_speed));
-                            // Fallthrough to process `speed'
-                            speed = new_speed;
-                        }
-                    }
-                    else
-                    {
-                        SWSS_LOG_ERROR("Failed to set port %s AN to %u", alias.c_str(), an);
-                        it++;
-                        continue;
                     }
                 }
 
