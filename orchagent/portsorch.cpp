@@ -15,6 +15,7 @@
 #include <tuple>
 #include <sstream>
 #include <unordered_set>
+#include <boost/algorithm/string.hpp>
 
 #include <netinet/if_ether.h>
 #include "net/if.h"
@@ -152,7 +153,7 @@ static const std::string& getValidInterfaceTypes()
             oss << iter.first << " ";
         }
         validInterfaceTypes = oss.str();
-        swss::toupper(validInterfaceTypes);
+        boost::to_upper(validInterfaceTypes);
     }
 
     return validInterfaceTypes;
@@ -2562,7 +2563,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 if (!adv_speeds_str.empty())
                 {
-                    swss::tolower(adv_speeds_str);
+                    boost::to_lower(adv_speeds_str);
                     if (!getPortAdvSpeedsVal(adv_speeds_str, adv_speeds))
                     {
                         it++;
@@ -2599,7 +2600,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 if (!interface_type_str.empty())
                 {
-                    swss::tolower(interface_type_str);
+                    boost::to_lower(interface_type_str);
                     if (!getPortInterfaceTypeVal(interface_type_str, interface_type))
                     {
                         it++;
@@ -2637,7 +2638,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 if (!adv_interface_types_str.empty())
                 {
-                    swss::tolower(adv_interface_types_str);
+                    boost::to_lower(adv_interface_types_str);
                     if (!getPortAdvInterfaceTypesVal(adv_interface_types_str, adv_interface_types))
                     {
                         it++;
