@@ -1616,7 +1616,7 @@ void PortsOrch::initPortSupportedSpeeds(const std::string& alias, sai_object_id_
     getPortSupportedSpeeds(alias, port_id, supported_speeds);
     m_portSupportedSpeeds[port_id] = supported_speeds;
     vector<FieldValueTuple> v;
-    std::string supported_speeds_str = swss::join(",", supported_speeds);
+    std::string supported_speeds_str = swss::join(',', supported_speeds.begin(), supported_speeds.end());
     v.emplace_back(std::make_pair("supported_speeds", supported_speeds_str));
     m_portStateTable.set(alias, v);
 }
@@ -2509,7 +2509,8 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     if (autoneg_mode_map.find(an_str) == autoneg_mode_map.end())
                     {
                         SWSS_LOG_ERROR("Failed to parse autoneg value: %s", an_str.c_str());
-                        it++;
+                        // Invalid auto negotiation mode configured, dont retry
+                        it = consumer.m_toSync.erase(it);
                         continue;
                     }
                     
@@ -2566,7 +2567,8 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     boost::to_lower(adv_speeds_str);
                     if (!getPortAdvSpeedsVal(adv_speeds_str, adv_speeds))
                     {
-                        it++;
+                        // Invalid advertised speeds configured, dont retry
+                        it = consumer.m_toSync.erase(it);
                         continue;
                     }
 
@@ -2603,7 +2605,8 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     boost::to_lower(interface_type_str);
                     if (!getPortInterfaceTypeVal(interface_type_str, interface_type))
                     {
-                        it++;
+                        // Invalid interface type configured, dont retry
+                        it = consumer.m_toSync.erase(it);
                         continue;
                     }
 
@@ -2641,7 +2644,8 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     boost::to_lower(adv_interface_types_str);
                     if (!getPortAdvInterfaceTypesVal(adv_interface_types_str, adv_interface_types))
                     {
-                        it++;
+                        // Invalid advertised interface types configured, dont retry
+                        it = consumer.m_toSync.erase(it);
                         continue;
                     }
 
@@ -2681,7 +2685,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         m_portList[alias] = p;
                         if (!isSpeedSupported(alias, p.m_port_id, speed))
                         {
-                            it++;
+                            SWSS_LOG_ERROR("Unsupported port speed %d", speed);
+                            // Speed not supported, dont retry
+                            it = consumer.m_toSync.erase(it);
                             continue;
                         }
 
