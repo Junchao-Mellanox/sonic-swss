@@ -290,6 +290,9 @@ private:
     bool getPortOperStatus(const Port& port, sai_port_oper_status_t& status) const;
     void updatePortOperStatus(Port &port, sai_port_oper_status_t status);
 
+    bool getPortOperSpeed(const Port& port, sai_uint32_t& speed) const;
+    void updateDbPortOperSpeed(Port &port, sai_uint32_t speed);
+
     void getPortSerdesVal(const std::string& s, std::vector<uint32_t> &lane_values);
     bool getPortAdvSpeedsVal(const std::string &s, std::vector<uint32_t> &speed_values);
     bool getPortInterfaceTypeVal(const std::string &s, sai_port_interface_type_t &interface_type);

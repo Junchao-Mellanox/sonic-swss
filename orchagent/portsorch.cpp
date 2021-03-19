@@ -2572,22 +2572,22 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         continue;
                     }
 
-                    if (p.m_admin_state_up)
-                    {
-                        /* Bring port down before applying speed */
-                        if (!setPortAdminStatus(p, false))
-                        {
-                            SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to set interface type", alias.c_str());
-                            it++;
-                            continue;
-                        }
-
-                        p.m_admin_state_up = false;
-                        m_portList[alias] = p;
-                    }
-
                     if (adv_speeds != p.m_adv_speeds)
                     {
+                        if (p.m_admin_state_up)
+                        {
+                            /* Bring port down before applying speed */
+                            if (!setPortAdminStatus(p, false))
+                            {
+                                SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to set interface type", alias.c_str());
+                                it++;
+                                continue;
+                            }
+
+                            p.m_admin_state_up = false;
+                            m_portList[alias] = p;
+                        }
+
                         if (!setPortAdvSpeeds(p.m_port_id, adv_speeds))
                         {
                             SWSS_LOG_ERROR("Failed to set port %s advertised speed to %s", alias.c_str(), adv_speeds_str.c_str());
@@ -4551,6 +4551,15 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
             }
 
             updatePortOperStatus(port, status);
+            if (status == SAI_PORT_OPER_STATUS_UP)
+            {
+                sai_uint32_t speed;
+                if (getPortOperSpeed(port, speed))
+                {
+                    SWSS_LOG_NOTICE("%s oper speed is %d", port.m_alias.c_str(), speed);
+                    updateDbPortOperSpeed(port, speed);
+                }
+            }
 
             /* update m_portList */
             m_portList[port.m_alias] = port;
@@ -4606,6 +4615,17 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
     notify(SUBJECT_TYPE_PORT_OPER_STATE_CHANGE, static_cast<void *>(&update));
 }
 
+void PortsOrch::updateDbPortOperSpeed(Port &port, sai_uint32_t speed)
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple> tuples;
+    FieldValueTuple tuple("speed", to_string(speed));
+    tuples.push_back(tuple);
+    m_portTable->set(port.m_alias, tuples);
+    port.m_speed = speed;
+}
+
 /*
  * sync up orchagent with libsai/ASIC for port state.
  *
@@ -4637,6 +4657,16 @@ void PortsOrch::refreshPortStatus()
 
         SWSS_LOG_INFO("%s oper status is %s", port.m_alias.c_str(), oper_status_strings.at(status).c_str());
         updatePortOperStatus(port, status);
+
+        if (status == SAI_PORT_OPER_STATUS_UP)
+        {
+            sai_uint32_t speed;
+            if (getPortOperSpeed(port, speed))
+            {
+                SWSS_LOG_INFO("%s oper speed is %d", port.m_alias.c_str(), speed);
+                updateDbPortOperSpeed(port, speed);
+            }
+        }
     }
 }
 
@@ -4660,6 +4690,30 @@ bool PortsOrch::getPortOperStatus(const Port& port, sai_port_oper_status_t& stat
     }
 
     status = static_cast<sai_port_oper_status_t>(attr.value.u32);
+
+    return true;
+}
+
+bool PortsOrch::getPortOperSpeed(const Port& port, sai_uint32_t& speed) const
+{
+    SWSS_LOG_ENTER();
+
+    if (port.m_type != Port::PHY)
+    {
+        return false;
+    }
+
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_OPER_SPEED;
+
+    sai_status_t ret = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+    if (ret != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get oper speed for %s", port.m_alias.c_str());
+        return false;
+    }
+
+    speed = static_cast<sai_uint32_t>(attr.value.u32);
 
     return true;
 }

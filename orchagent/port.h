@@ -92,7 +92,7 @@ public:
     uint32_t            m_mtu = DEFAULT_MTU;
     uint32_t            m_speed = 0;    // Mbps
     std::string         m_learn_mode = "hardware";
-    uint8_t             m_autoneg = -1;  // -1 means not set
+    int                 m_autoneg = -1;  // -1 means not set
     bool                m_admin_state_up = false;
     bool                m_init = false;
     bool                m_l3_vni = false;
