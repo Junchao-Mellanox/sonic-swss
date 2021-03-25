@@ -2536,22 +2536,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             SWSS_LOG_NOTICE("Set port %s AutoNeg to %u", alias.c_str(), an);
                             p.m_autoneg = an;
                             m_portList[alias] = p;
-
-                            // Once AN is changed
-                            // - no speed specified: need to reapply the port speed or port adv speed accordingly
-                            // - speed specified: need to apply the port speed or port adv speed by the specified one
-                            // Note: one special case is
-                            // - speed specified as existing m_speed: need to apply even they are the same
-                            auto old_speed = p.m_speed;
-                            p.m_speed = 0;
-                            auto new_speed = speed ? speed : old_speed;
-                            if (new_speed)
-                            {
-                                // Modify the task in place
-                                kfvFieldsValues(t).emplace_back("speed", to_string(new_speed));
-                                // Fallthrough to process `speed'
-                                speed = new_speed;
-                            }
                         }
                         else
                         {
@@ -2559,6 +2543,52 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             it++;
                             continue;
                         }
+                    }
+                }
+
+                if (speed != 0)
+                {
+                    if (speed != p.m_speed)
+                    {
+                        m_portList[alias] = p;
+                        if (!isSpeedSupported(alias, p.m_port_id, speed))
+                        {
+                            SWSS_LOG_ERROR("Unsupported port speed %d", speed);
+                            // Speed not supported, dont retry
+                            it = consumer.m_toSync.erase(it);
+                            continue;
+                        }
+
+                        // for backward compatible, if p.m_autoneg != 1, toggle admin status
+                        if (p.m_admin_state_up && p.m_autoneg != 1)
+                        {
+                            /* Bring port down before applying speed */
+                            if (!setPortAdminStatus(p, false))
+                            {
+                                SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to set speed", alias.c_str());
+                                it++;
+                                continue;
+                            }
+
+                            p.m_admin_state_up = false;
+                            m_portList[alias] = p;
+                        }
+
+                        if (!setPortSpeed(p, speed))
+                        {
+                            SWSS_LOG_ERROR("Failed to set port %s speed to %u", alias.c_str(), speed);
+                            it++;
+                            continue;
+                        }
+ 
+                        SWSS_LOG_NOTICE("Set port %s speed to %u", alias.c_str(), speed);
+                        p.m_speed = speed;
+                        m_portList[alias] = p;
+                    }
+                    else
+                    {
+                        /* Always update Gearbox speed on Gearbox ports */
+                        setGearboxPortsAttr(p, SAI_PORT_ATTR_SPEED, &speed);
                     }
                 }
 
@@ -2574,7 +2604,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                     if (adv_speeds != p.m_adv_speeds)
                     {
-                        if (p.m_admin_state_up)
+                        if (p.m_admin_state_up && p.m_autoneg == 1)
                         {
                             /* Bring port down before applying speed */
                             if (!setPortAdminStatus(p, false))
@@ -2612,7 +2642,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                     if (interface_type != p.m_interface_type)
                     {
-                        if (p.m_admin_state_up)
+                        if (p.m_admin_state_up && p.m_autoneg == 0)
                         {
                             /* Bring port down before applying speed */
                             if (!setPortAdminStatus(p, false))
@@ -2649,7 +2679,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         continue;
                     }
 
-                    if (adv_interface_types != p.m_adv_interface_types)
+                    if (adv_interface_types != p.m_adv_interface_types && p.m_autoneg == 1)
                     {
                         if (p.m_admin_state_up)
                         {
@@ -2678,49 +2708,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                 }
 
-                if (speed != 0)
-                {
-                    if (speed != p.m_speed)
-                    {
-                        m_portList[alias] = p;
-                        if (!isSpeedSupported(alias, p.m_port_id, speed))
-                        {
-                            SWSS_LOG_ERROR("Unsupported port speed %d", speed);
-                            // Speed not supported, dont retry
-                            it = consumer.m_toSync.erase(it);
-                            continue;
-                        }
-
-                        if (p.m_admin_state_up)
-                        {
-                            /* Bring port down before applying speed */
-                            if (!setPortAdminStatus(p, false))
-                            {
-                                SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to set speed", alias.c_str());
-                                it++;
-                                continue;
-                            }
-
-                            p.m_admin_state_up = false;
-                            m_portList[alias] = p;
-                        }
-
-                        if (!setPortSpeed(p, speed))
-                        {
-                            SWSS_LOG_ERROR("Failed to set port %s speed to %u", alias.c_str(), speed);
-                            it++;
-                            continue;
-                        }
-
-                        SWSS_LOG_NOTICE("Set port %s speed to %u", alias.c_str(), speed);
-                    }
-                    else
-                    {
-                        /* Always update Gearbox speed on Gearbox ports */
-                        setGearboxPortsAttr(p, SAI_PORT_ATTR_SPEED, &speed);
-                    }
-                }
-                
                 if (mtu != 0 && mtu != p.m_mtu)
                 {
                     if (setPortMtu(p.m_port_id, mtu))
@@ -4623,7 +4610,10 @@ void PortsOrch::updateDbPortOperSpeed(Port &port, sai_uint32_t speed)
     FieldValueTuple tuple("speed", to_string(speed));
     tuples.push_back(tuple);
     m_portTable->set(port.m_alias, tuples);
-    port.m_speed = speed;
+
+    // We don't set port.m_speed = speed here, because CONFIG_DB still hold the old
+    // value. If we set it here, next time configure any attributes related port will
+    // cause a port flapping.
 }
 
 /*
