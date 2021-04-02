@@ -2563,11 +2563,8 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     {
                         throw runtime_error("PortsOrch initialization failure.");
                     }
-                    else
-                    {
-                        initPortSupportedSpeeds(get<0>(it->second), m_portListLaneMap[it->first]);
-                    }
 
+                    initPortSupportedSpeeds(get<0>(it->second), m_portListLaneMap[it->first]);
                     it++;
                 }
 
@@ -2611,7 +2608,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     if (autoneg_mode_map.find(an_str) == autoneg_mode_map.end())
                     {
                         SWSS_LOG_ERROR("Failed to parse autoneg value: %s", an_str.c_str());
-                        // Invalid auto negotiation mode configured, dont retry
+                        // Invalid auto negotiation mode configured, don't retry
                         it = consumer.m_toSync.erase(it);
                         continue;
                     }
@@ -2635,13 +2632,13 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                         if (setPortAutoNeg(p.m_port_id, an))
                         {
-                            SWSS_LOG_NOTICE("Set port %s AutoNeg to %u", alias.c_str(), an);
+                            SWSS_LOG_NOTICE("Set port %s AutoNeg from %d to %d", alias.c_str(), p.m_autoneg, an);
                             p.m_autoneg = an;
                             m_portList[alias] = p;
                         }
                         else
                         {
-                            SWSS_LOG_ERROR("Failed to set port %s AN to %u", alias.c_str(), an);
+                            SWSS_LOG_ERROR("Failed to set port %s AN from %d to %d", alias.c_str(), p.m_autoneg, an);
                             it++;
                             continue;
                         }
@@ -2652,10 +2649,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 {
                     if (speed != p.m_speed)
                     {
-                        m_portList[alias] = p;
                         if (!isSpeedSupported(alias, p.m_port_id, speed))
                         {
-                            SWSS_LOG_ERROR("Unsupported port speed %d", speed);
+                            SWSS_LOG_ERROR("Unsupported port speed %u", speed);
                             // Speed not supported, dont retry
                             it = consumer.m_toSync.erase(it);
                             continue;
@@ -2678,12 +2674,12 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                         if (!setPortSpeed(p, speed))
                         {
-                            SWSS_LOG_ERROR("Failed to set port %s speed to %u", alias.c_str(), speed);
+                            SWSS_LOG_ERROR("Failed to set port %s speed from %u to %u", alias.c_str(), p.m_speed, speed);
                             it++;
                             continue;
                         }
  
-                        SWSS_LOG_NOTICE("Set port %s speed to %u", alias.c_str(), speed);
+                        SWSS_LOG_NOTICE("Set port %s speed from %u to %u", alias.c_str(), p.m_speed, speed);
                         p.m_speed = speed;
                         m_portList[alias] = p;
                     }
@@ -2722,11 +2718,15 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                         if (!setPortAdvSpeeds(p.m_port_id, adv_speeds))
                         {
-                            SWSS_LOG_ERROR("Failed to set port %s advertised speed to %s", alias.c_str(), adv_speeds_str.c_str());
+                            SWSS_LOG_ERROR("Failed to set port %s advertised speed from %s to %s", alias.c_str(),
+                                                                                                   swss::join(',', p.m_adv_speeds.begin(), p.m_adv_speeds.end()).c_str(),
+                                                                                                   adv_speeds_str.c_str());
                             it++;
                             continue;
                         }
-                        SWSS_LOG_NOTICE("Set port %s advertised speed to %s", alias.c_str(), adv_speeds_str.c_str());
+                        SWSS_LOG_NOTICE("Set port %s advertised speed from %s to %s", alias.c_str(),
+                                                                                      swss::join(',', p.m_adv_speeds.begin(), p.m_adv_speeds.end()).c_str(),
+                                                                                      adv_speeds_str.c_str());
                         p.m_adv_speeds.swap(adv_speeds);
                         m_portList[alias] = p;
                     }
