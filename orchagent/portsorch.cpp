@@ -30,6 +30,7 @@
 #include "notifier.h"
 #include "fdborch.h"
 #include "stringutility.h"
+#include "subscriberstatetable.h"
 
 extern sai_switch_api_t *sai_switch_api;
 extern sai_bridge_api_t *sai_bridge_api;
@@ -48,6 +49,10 @@ extern BufferOrch *gBufferOrch;
 extern FdbOrch *gFdbOrch;
 extern Directory<Orch*> gDirectory;
 extern sai_system_port_api_t *sai_system_port_api;
+extern string gMySwitchType;
+extern int32_t gVoqMySwitchId;
+extern string gMyHostName;
+extern string gMyAsicName;
 
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
@@ -275,7 +280,7 @@ static char* hostif_vlan_tag[] = {
  *    bridge. By design, SONiC switch starts with all bridge ports removed from
  *    default VLAN and all ports removed from .1Q bridge.
  */
-PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames) :
+PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames, DBConnector *chassisAppDb) :
         Orch(db, tableNames),
         m_portStateTable(stateDb, STATE_PORT_TABLE_NAME),
         port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
@@ -470,6 +475,22 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
     m_portStatusNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
     auto portStatusNotificatier = new Notifier(m_portStatusNotificationConsumer, this, "PORT_STATUS_NOTIFICATIONS");
     Orch::addExecutor(portStatusNotificatier);
+
+    if (gMySwitchType == "voq")
+    {
+        string tableName;
+        //Add subscriber to process system LAG (System PortChannel) table
+        tableName = CHASSIS_APP_LAG_TABLE_NAME;
+        Orch::addExecutor(new Consumer(new SubscriberStateTable(chassisAppDb, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, 0), this, tableName));
+        m_tableVoqSystemLagTable = unique_ptr<Table>(new Table(chassisAppDb, CHASSIS_APP_LAG_TABLE_NAME));
+
+        //Add subscriber to process system LAG member (System PortChannelMember) table
+        tableName = CHASSIS_APP_LAG_MEMBER_TABLE_NAME;
+        Orch::addExecutor(new Consumer(new SubscriberStateTable(chassisAppDb, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, 0), this, tableName));
+        m_tableVoqSystemLagMemberTable = unique_ptr<Table>(new Table(chassisAppDb, CHASSIS_APP_LAG_MEMBER_TABLE_NAME));
+
+        m_lagIdAllocator = unique_ptr<LagIdAllocator> (new LagIdAllocator(chassisAppDb));
+    }
 }
 
 void PortsOrch::removeDefaultVlanMembers()
@@ -1489,6 +1510,12 @@ bool PortsOrch::setPortPvid(Port &port, sai_uint32_t pvid)
         return true;
     }
 
+    if(port.m_type == Port::SYSTEM)
+    {
+        SWSS_LOG_INFO("pvid setting for system port %s is not applicable", port.m_alias.c_str());
+        return true;
+    }
+
     if (port.m_rif_id)
     {
         SWSS_LOG_ERROR("pvid setting for router interface %s is not allowed", port.m_alias.c_str());
@@ -1990,6 +2017,55 @@ bool PortsOrch::setHostIntfsOperStatus(const Port& port, bool isUp) const
 
     SWSS_LOG_NOTICE("Set operation status %s to host interface %s",
             isUp ? "UP" : "DOWN", port.m_alias.c_str());
+
+    return true;
+}
+
+bool PortsOrch::createVlanHostIntf(Port& vl, string hostif_name)
+{
+    SWSS_LOG_ENTER();
+
+    if (vl.m_vlan_info.host_intf_id != SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("Host interface already assigned to VLAN %d", vl.m_vlan_info.vlan_id);
+        return false;
+    }
+
+    vector<sai_attribute_t> attrs;
+    sai_attribute_t attr;
+
+    attr.id = SAI_HOSTIF_ATTR_TYPE;
+    attr.value.s32 = SAI_HOSTIF_TYPE_NETDEV;
+    attrs.push_back(attr);
+
+    attr.id = SAI_HOSTIF_ATTR_OBJ_ID;
+    attr.value.oid = vl.m_vlan_info.vlan_oid;
+    attrs.push_back(attr);
+
+    attr.id = SAI_HOSTIF_ATTR_NAME;
+    strncpy(attr.value.chardata, hostif_name.c_str(), sizeof(attr.value.chardata));
+    attrs.push_back(attr);
+
+    sai_status_t status = sai_hostif_api->create_hostif(&vl.m_vlan_info.host_intf_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create host interface %s for VLAN %d", hostif_name.c_str(), vl.m_vlan_info.vlan_id);
+        return false;
+    }
+
+    m_portList[vl.m_alias] = vl;
+
+    return true;
+}
+
+bool PortsOrch::removeVlanHostIntf(Port vl)
+{
+    sai_status_t status = sai_hostif_api->remove_hostif(vl.m_vlan_info.host_intf_id);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove VLAN %d host interface", vl.m_vlan_info.vlan_id);
+        return false;
+    }
 
     return true;
 }
@@ -3056,6 +3132,7 @@ void PortsOrch::doVlanTask(Consumer &consumer)
             // Retrieve attributes
             uint32_t mtu = 0;
             MacAddress mac;
+            string hostif_name = "";
             for (auto i : kfvFieldsValues(t))
             {
                 if (fvField(i) == "mtu")
@@ -3065,6 +3142,10 @@ void PortsOrch::doVlanTask(Consumer &consumer)
                 if (fvField(i) == "mac")
                 {
                     mac = MacAddress(fvValue(i));
+                }
+                if (fvField(i) == "hostif_name")
+                {
+                    hostif_name = fvValue(i);
                 }
             }
 
@@ -3106,6 +3187,16 @@ void PortsOrch::doVlanTask(Consumer &consumer)
                     if (vl.m_rif_id)
                     {
                         gIntfsOrch->setRouterIntfsMac(vl);
+                    }
+                }
+                if (!hostif_name.empty())
+                {
+                    if (!createVlanHostIntf(vl, hostif_name))
+                    {
+                        // No need to fail in case of error as this is for monitoring VLAN.
+                        // Error message is printed by "createVlanHostIntf" so just handle failure gracefully.
+                        it = consumer.m_toSync.erase(it);
+                        continue;
                     }
                 }
             }
@@ -3251,6 +3342,8 @@ void PortsOrch::doLagTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
+    string table_name = consumer.getTableName();
+
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
@@ -3265,6 +3358,8 @@ void PortsOrch::doLagTask(Consumer &consumer)
             uint32_t mtu = 0;
             string learn_mode;
             string operation_status;
+            uint32_t lag_id = 0;
+            int32_t switch_id = -1;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -3286,12 +3381,37 @@ void PortsOrch::doLagTask(Consumer &consumer)
                         continue;
                     }
                 }
+                else if (fvField(i) == "lag_id")
+                {
+                    lag_id = (uint32_t)stoul(fvValue(i));
+                }
+                else if (fvField(i) == "switch_id")
+                {
+                    switch_id = stoi(fvValue(i));
+                }
+            }
+
+            if (table_name == CHASSIS_APP_LAG_TABLE_NAME)
+            {
+                if (switch_id == gVoqMySwitchId)
+                {
+                    //Already created, syncd local lag from CHASSIS_APP_DB. Skip
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+            }
+            else
+            {
+                // For local portchannel
+
+                lag_id = 0;
+                switch_id = -1;
             }
 
             // Create a new LAG when the new alias comes
             if (m_portList.find(alias) == m_portList.end())
             {
-                if (!addLag(alias))
+                if (!addLag(alias, lag_id, switch_id))
                 {
                     it++;
                     continue;
@@ -3381,6 +3501,8 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
+    string table_name = consumer.getTableName();
+
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
@@ -3413,6 +3535,27 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
             SWSS_LOG_ERROR("Failed to locate port %s", port_alias.c_str());
             it = consumer.m_toSync.erase(it);
             continue;
+        }
+
+        if (table_name == CHASSIS_APP_LAG_MEMBER_TABLE_NAME)
+        {
+            int32_t lag_switch_id = lag.m_system_lag_info.switch_id;
+            if (lag_switch_id == gVoqMySwitchId)
+            {
+                //Synced local member addition to local lag. Skip
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
+            //Sanity check: The switch id-s of lag and member must match
+            int32_t port_switch_id = port.m_system_port_info.switch_id;
+            if (port_switch_id != lag_switch_id)
+            {
+                SWSS_LOG_ERROR("System lag switch id mismatch. Lag %s switch id: %d, Member %s switch id: %d",
+                        lag_alias.c_str(), lag_switch_id, port_alias.c_str(), port_switch_id);
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
         }
 
         /* Update a LAG member */
@@ -3557,11 +3700,11 @@ void PortsOrch::doTask(Consumer &consumer)
         {
             doVlanMemberTask(consumer);
         }
-        else if (table_name == APP_LAG_TABLE_NAME)
+        else if (table_name == APP_LAG_TABLE_NAME || table_name == CHASSIS_APP_LAG_TABLE_NAME)
         {
             doLagTask(consumer);
         }
-        else if (table_name == APP_LAG_MEMBER_TABLE_NAME)
+        else if (table_name == APP_LAG_MEMBER_TABLE_NAME || table_name == CHASSIS_APP_LAG_MEMBER_TABLE_NAME)
         {
             doLagMemberTask(consumer);
         }
@@ -4048,6 +4191,13 @@ bool PortsOrch::removeVlan(Port vlan)
        return false;
     }
 
+
+    if (vlan.m_vlan_info.host_intf_id && !removeVlanHostIntf(vlan))
+    {
+        SWSS_LOG_ERROR("Failed to remove VLAN %d host interface", vlan.m_vlan_info.vlan_id);
+        return false;
+    }
+
     sai_status_t status = sai_vlan_api->remove_vlan(vlan.m_vlan_info.vlan_oid);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -4206,12 +4356,43 @@ bool PortsOrch::isVlanMember(Port &vlan, Port &port)
     return true;
 }
 
-bool PortsOrch::addLag(string lag_alias)
+bool PortsOrch::addLag(string lag_alias, uint32_t spa_id, int32_t switch_id)
 {
     SWSS_LOG_ENTER();
 
+    vector<sai_attribute_t> lag_attrs;
+    string system_lag_alias = lag_alias;
+
+    if (gMySwitchType == "voq")
+    {
+        if (switch_id < 0)
+        {
+            // Local PortChannel. Allocate unique lag id from central CHASSIS_APP_DB
+            // Use the chassis wide unique system lag name.
+
+            // Get the local switch id and derive the system lag name.
+
+            switch_id = gVoqMySwitchId;
+            system_lag_alias = gMyHostName + "|" + gMyAsicName + "|" + lag_alias;
+
+            // Allocate unique lag id
+            spa_id = m_lagIdAllocator->lagIdAdd(system_lag_alias, 0);
+
+            if ((int32_t)spa_id <= 0)
+            {
+                SWSS_LOG_ERROR("Failed to allocate unique LAG id for local lag %s rv:%d", lag_alias.c_str(), spa_id);
+                return false;
+            }
+        }
+
+        sai_attribute_t attr;
+        attr.id = SAI_LAG_ATTR_SYSTEM_PORT_AGGREGATE_ID;
+        attr.value.u32 = spa_id;
+        lag_attrs.push_back(attr);
+    }
+
     sai_object_id_t lag_id;
-    sai_status_t status = sai_lag_api->create_lag(&lag_id, gSwitchId, 0, NULL);
+    sai_status_t status = sai_lag_api->create_lag(&lag_id, gSwitchId, static_cast<uint32_t>(lag_attrs.size()), lag_attrs.data());
 
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -4238,6 +4419,24 @@ bool PortsOrch::addLag(string lag_alias)
     vector<FieldValueTuple> fields;
     fields.push_back(tuple);
     m_counterLagTable->set("", fields);
+
+    if (gMySwitchType == "voq")
+    {
+        // If this is voq switch, record system lag info
+
+        lag.m_system_lag_info.alias = system_lag_alias;
+        lag.m_system_lag_info.switch_id = switch_id;
+        lag.m_system_lag_info.spa_id = spa_id;
+
+        // This will update port list with local port channel name for local port channels
+        // and with system lag name for the system lags received from chassis app db
+
+        m_portList[lag_alias] = lag;
+
+        // Sync to SYSTEM_LAG_TABLE of CHASSIS_APP_DB
+
+        voqSyncAddLag(lag);
+    }
 
     return true;
 }
@@ -4287,6 +4486,29 @@ bool PortsOrch::removeLag(Port lag)
 
     m_counterLagTable->hdel("", lag.m_alias);
 
+    if (gMySwitchType == "voq")
+    {
+        // Free the lag id, if this is local LAG
+
+        if (lag.m_system_lag_info.switch_id == gVoqMySwitchId)
+        {
+            int32_t rv;
+            int32_t spa_id = lag.m_system_lag_info.spa_id;
+
+            rv = m_lagIdAllocator->lagIdDel(lag.m_system_lag_info.alias);
+
+            if (rv != spa_id)
+            {
+                SWSS_LOG_ERROR("Failed to delete LAG id %d of local lag %s rv:%d", spa_id, lag.m_alias.c_str(), rv);
+                return false;
+            }
+
+            // Sync to SYSTEM_LAG_TABLE of CHASSIS_APP_DB
+
+            voqSyncDelLag(lag);
+        }
+    }
+
     return true;
 }
 
@@ -4326,7 +4548,7 @@ bool PortsOrch::addLagMember(Port &lag, Port &port, bool enableForwarding)
     attr.value.oid = port.m_port_id;
     attrs.push_back(attr);
 
-    if (!enableForwarding)
+    if (!enableForwarding && port.m_type != Port::SYSTEM)
     {
         attr.id = SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE;
         attr.value.booldata = true;
@@ -4374,6 +4596,12 @@ bool PortsOrch::addLagMember(Port &lag, Port &port, bool enableForwarding)
     LagMemberUpdate update = { lag, port, true };
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
 
+    if (gMySwitchType == "voq")
+    {
+        //Sync to SYSTEM_LAG_MEMBER_TABLE of CHASSIS_APP_DB
+        voqSyncAddLagMember(lag, port);
+    }
+
     return true;
 }
 
@@ -4413,6 +4641,12 @@ bool PortsOrch::removeLagMember(Port &lag, Port &port)
     LagMemberUpdate update = { lag, port, false };
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
 
+    if (gMySwitchType == "voq")
+    {
+        //Sync to SYSTEM_LAG_MEMBER_TABLE of CHASSIS_APP_DB
+        voqSyncDelLagMember(lag, port);
+    }
+
     return true;
 }
 
@@ -4420,6 +4654,12 @@ bool PortsOrch::setCollectionOnLagMember(Port &lagMember, bool enableCollection)
 {
     /* Port must be LAG member */
     assert(lagMember.m_lag_member_id);
+
+    // Collection is not applicable for system port lag members (i.e, members of remote LAGs)
+    if (lagMember.m_type == Port::SYSTEM)
+    {
+        return true;
+    }
 
     sai_status_t status = SAI_STATUS_FAILURE;
     sai_attribute_t attr {};
@@ -4451,6 +4691,12 @@ bool PortsOrch::setDistributionOnLagMember(Port &lagMember, bool enableDistribut
 {
     /* Port must be LAG member */
     assert(lagMember.m_lag_member_id);
+
+    // Distribution is not applicable for system port lag members (i.e, members of remote LAGs)
+    if (lagMember.m_type == Port::SYSTEM)
+    {
+        return true;
+    }
 
     sai_status_t status = SAI_STATUS_FAILURE;
     sai_attribute_t attr {};
@@ -5665,4 +5911,69 @@ bool PortsOrch::setVoqInbandIntf(string &alias, string &type)
     return true;
 }
 
+void PortsOrch::voqSyncAddLag (Port &lag)
+{
+    int32_t switch_id = lag.m_system_lag_info.switch_id;
 
+    // Sync only local lag add to CHASSIS_APP_DB
+
+    if (switch_id != gVoqMySwitchId)
+    {
+        return;
+    }
+
+    uint32_t spa_id = lag.m_system_lag_info.spa_id;
+
+    vector<FieldValueTuple> attrs;
+
+    FieldValueTuple li ("lag_id", to_string(spa_id));
+    attrs.push_back(li);
+
+    FieldValueTuple si ("switch_id", to_string(switch_id));
+    attrs.push_back(si);
+
+    string key = lag.m_system_lag_info.alias;
+
+    m_tableVoqSystemLagTable->set(key, attrs);
+}
+
+void PortsOrch::voqSyncDelLag(Port &lag)
+{
+    // Sync only local lag del to CHASSIS_APP_DB
+    if (lag.m_system_lag_info.switch_id != gVoqMySwitchId)
+    {
+        return;
+    }
+
+    string key = lag.m_system_lag_info.alias;
+
+    m_tableVoqSystemLagTable->del(key);
+}
+
+void PortsOrch::voqSyncAddLagMember(Port &lag, Port &port)
+{
+    // Sync only local lag's member add to CHASSIS_APP_DB
+    if (lag.m_system_lag_info.switch_id != gVoqMySwitchId)
+    {
+        return;
+    }
+
+    vector<FieldValueTuple> attrs;
+    FieldValueTuple nullFv ("NULL", "NULL");
+    attrs.push_back(nullFv);
+
+    string key = lag.m_system_lag_info.alias + ":" + port.m_system_port_info.alias;
+    m_tableVoqSystemLagMemberTable->set(key, attrs);
+}
+
+void PortsOrch::voqSyncDelLagMember(Port &lag, Port &port)
+{
+    // Sync only local lag's member del to CHASSIS_APP_DB
+    if (lag.m_system_lag_info.switch_id != gVoqMySwitchId)
+    {
+        return;
+    }
+
+    string key = lag.m_system_lag_info.alias + ":" + port.m_system_port_info.alias;
+    m_tableVoqSystemLagMemberTable->del(key);
+}
