@@ -2716,16 +2716,18 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             m_portList[alias] = p;
                         }
 
+                        auto ori_adv_speeds = swss::join(',', p.m_adv_speeds.begin(), p.m_adv_speeds.end());
                         if (!setPortAdvSpeeds(p.m_port_id, adv_speeds))
                         {
+                            
                             SWSS_LOG_ERROR("Failed to set port %s advertised speed from %s to %s", alias.c_str(),
-                                                                                                   swss::join(',', p.m_adv_speeds.begin(), p.m_adv_speeds.end()).c_str(),
+                                                                                                   ori_adv_speeds.c_str(),
                                                                                                    adv_speeds_str.c_str());
                             it++;
                             continue;
                         }
                         SWSS_LOG_NOTICE("Set port %s advertised speed from %s to %s", alias.c_str(),
-                                                                                      swss::join(',', p.m_adv_speeds.begin(), p.m_adv_speeds.end()).c_str(),
+                                                                                      ori_adv_speeds.c_str(),
                                                                                       adv_speeds_str.c_str());
                         p.m_adv_speeds.swap(adv_speeds);
                         m_portList[alias] = p;
