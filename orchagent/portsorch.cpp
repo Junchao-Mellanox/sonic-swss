@@ -2679,6 +2679,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
             }
             else
             {
+
                 if (!an_str.empty())
                 {
                     if (autoneg_mode_map.find(an_str) == autoneg_mode_map.end())
@@ -2915,7 +2916,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     if (fec_mode_map.find(fec_mode) != fec_mode_map.end())
                     {
                         /* reset fec mode upon mode change */
-                        if (p.m_fec_mode != fec_mode_map[fec_mode])
+                        if (!p.m_fec_cfg || p.m_fec_mode != fec_mode_map[fec_mode])
                         {
                             if (p.m_admin_state_up)
                             {
@@ -2929,6 +2930,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                                 p.m_admin_state_up = false;
                                 p.m_fec_mode = fec_mode_map[fec_mode];
+                                p.m_fec_cfg = true;
 
                                 if (setPortFec(p, p.m_fec_mode))
                                 {
@@ -2946,6 +2948,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             {
                                 /* Port is already down, setting fec mode*/
                                 p.m_fec_mode = fec_mode_map[fec_mode];
+                                p.m_fec_cfg = true;
                                 if (setPortFec(p, p.m_fec_mode))
                                 {
                                     m_portList[alias] = p;
