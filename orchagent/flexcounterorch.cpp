@@ -9,6 +9,7 @@
 #include "bufferorch.h"
 #include "flexcounterorch.h"
 #include "debugcounterorch.h"
+#include "copporch.h"
 
 extern sai_port_api_t *sai_port_api;
 
@@ -16,6 +17,7 @@ extern PortsOrch *gPortsOrch;
 extern FabricPortsOrch *gFabricPortsOrch;
 extern IntfsOrch *gIntfsOrch;
 extern BufferOrch *gBufferOrch;
+extern CoppOrch *gCoppOrch;
 
 #define BUFFER_POOL_WATERMARK_KEY   "BUFFER_POOL_WATERMARK"
 #define PORT_KEY                    "PORT"
@@ -23,12 +25,13 @@ extern BufferOrch *gBufferOrch;
 #define QUEUE_KEY                   "QUEUE"
 #define PG_WATERMARK_KEY            "PG_WATERMARK"
 #define RIF_KEY                     "RIF"
+#define FLOW_CNT_TRAP_KEY           "FLOW_CNT_TRAP"
 
 unordered_map<string, string> flexCounterGroupMap =
 {
     {"PORT", PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"PORT_RATES", PORT_RATE_COUNTER_FLEX_COUNTER_GROUP},
-    {"PORT_BUFFER_DROP", PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {"PORT_BUFFER_DROP", PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP},
     {"QUEUE", QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"PFCWD", PFC_WD_FLEX_COUNTER_GROUP},
     {"QUEUE_WATERMARK", QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP},
@@ -38,6 +41,7 @@ unordered_map<string, string> flexCounterGroupMap =
     {"RIF", RIF_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"RIF_RATES", RIF_RATE_COUNTER_FLEX_COUNTER_GROUP},
     {"DEBUG_COUNTER", DEBUG_COUNTER_FLEX_COUNTER_GROUP},
+    {FLOW_CNT_TRAP_KEY, HOSTIF_TRAP_COUNTER_FLEX_COUNTER_GROUP},
 };
 
 
@@ -139,6 +143,20 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     if (gFabricPortsOrch)
                     {
                         gFabricPortsOrch->generateQueueStats();
+                    }
+                    if (gCoppOrch && (key == FLOW_CNT_TRAP_KEY))
+                    {
+                        if (value == "enable")
+                        {
+                            m_hostif_trap_counter_enabled = true;
+                            gCoppOrch->generateHostIfTrapCounterIdList();
+                        }
+                        else if (value == "disable")
+                        {
+                            gCoppOrch->clearHostIfTrapCounterIdList();
+                            m_hostif_trap_counter_enabled = false;
+                        }
+
                     }
                     vector<FieldValueTuple> fieldValues;
                     fieldValues.emplace_back(FLEX_COUNTER_STATUS_FIELD, value);
