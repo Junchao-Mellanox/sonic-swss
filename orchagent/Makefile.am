@@ -3,6 +3,7 @@ INCLUDES = -I $(top_srcdir)/lib \
            -I $(top_srcdir)/warmrestart \
            -I flex_counter \
            -I debug_counter \
+           -I flow_counter \
            -I pbh
 
 CFLAGS_SAI = -I /usr/include/sai
@@ -21,7 +22,8 @@ dist_swss_DATA = \
 		 watermark_queue.lua \
 		 watermark_pg.lua \
 		 watermark_bufferpool.lua \
-		 lagids.lua
+		 lagids.lua \
+		 trap_rates.lua
 
 bin_PROGRAMS = orchagent routeresync orchagent_restart_check
 
@@ -81,6 +83,7 @@ orchagent_SOURCES = \
 
 orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp
 orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp
+orchagent_SOURCES += flow_counter/flow_counter_handler.cpp
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
