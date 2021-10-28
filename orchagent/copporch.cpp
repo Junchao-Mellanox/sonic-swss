@@ -8,6 +8,7 @@
 #include "schema.h"
 #include "directory.h"
 #include "flow_counter_handler.h"
+#include "timer.h"
 
 #include <inttypes.h>
 #include <sstream>
