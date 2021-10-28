@@ -4,7 +4,7 @@
 #include "flexcounterorch.h"
 #include "tokenize.h"
 #include "logger.h"
-#include "sai_serialize.h"  
+#include "sai_serialize.h"
 #include "schema.h"
 #include "directory.h"
 #include "flow_counter_handler.h"
@@ -25,6 +25,8 @@ extern sai_object_id_t      gSwitchId;
 extern PortsOrch*           gPortsOrch;
 extern Directory<Orch*>     gDirectory;
 extern bool                 gIsNatSupported;
+
+#define FLEX_COUNTER_UPD_INTERVAL 1
 
 static map<string, sai_meter_type_t> policer_meter_map = {
     {"packets", SAI_METER_TYPE_PACKETS},
@@ -120,11 +122,18 @@ CoppOrch::CoppOrch(DBConnector* db, string tableName) :
     Orch(db, tableName),
     m_counter_db(std::shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0))),
     m_flex_db(std::shared_ptr<DBConnector>(new DBConnector("FLEX_COUNTER_DB", 0))),
+    m_asic_db(std::shared_ptr<DBConnector>(new DBConnector("ASIC_DB", 0))),
     m_counter_table(std::unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_TRAP_NAME_MAP))),
+    m_vidToRidTable(std::unique_ptr<Table>(new Table(m_asic_db.get(), "VIDTORID"))),
     m_flex_counter_group_table(std::unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_GROUP_TABLE))),
     m_trap_counter_manager(HOSTIF_TRAP_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, HOSTIF_TRAP_COUNTER_POLLING_INTERVAL_MS, false)
 {
     SWSS_LOG_ENTER();
+    auto intervT = timespec { .tv_sec = FLEX_COUNTER_UPD_INTERVAL , .tv_nsec = 0 };
+    m_FlexCounterUpdTimer = new SelectableTimer(intervT);
+    auto executorT = new ExecutableTimer(m_FlexCounterUpdTimer, this, "FLEX_COUNTER_UPD_TIMER");
+    Orch::addExecutor(executorT);
+
     initDefaultHostIntfTable();
     initDefaultTrapGroup();
     initDefaultTrapIds();
@@ -547,7 +556,7 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
                                     policer_attribs, genetlink_attribs))
         {
             return task_process_status::task_invalid_entry;
-        } 
+        }
 
         /* Set host interface trap group */
         if (m_trap_group_map.find(trap_group_name) != m_trap_group_map.end())
@@ -611,7 +620,7 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
                     if (sai_status != SAI_STATUS_SUCCESS)
                     {
                         SWSS_LOG_ERROR("Failed to set attribute %d on trap %" PRIx64 ""
-                                " on group %s", i.id, m_syncdTrapIds[trap_id].trap_obj, 
+                                " on group %s", i.id, m_syncdTrapIds[trap_id].trap_obj,
                                 trap_group_name.c_str());
                         task_process_status handle_status = handleSaiSetStatus(SAI_API_HOSTIF, sai_status);
                         if (handle_status != task_process_status::task_success)
@@ -629,10 +638,10 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
         }
         if (!genetlink_attribs.empty())
         {
-            if (m_trap_group_hostif_map.find(m_trap_group_map[trap_group_name]) != 
+            if (m_trap_group_hostif_map.find(m_trap_group_map[trap_group_name]) !=
                     m_trap_group_hostif_map.end())
             {
-                SWSS_LOG_ERROR("Genetlink hostif exists for the trap group %s", 
+                SWSS_LOG_ERROR("Genetlink hostif exists for the trap group %s",
                                trap_group_name.c_str());
                 return task_process_status::task_failed;
             }
@@ -730,6 +739,36 @@ void CoppOrch::doTask(Consumer &consumer)
     }
 }
 
+void CoppOrch::doTask(SelectableTimer &timer)
+{
+    SWSS_LOG_ENTER();
+    SWSS_LOG_DEBUG("Registering %" PRId64 " new trap counters", m_pendingAddToFlexCntr.size());
+
+    string value;
+    for (auto it = m_pendingAddToFlexCntr.begin(); it != m_pendingAddToFlexCntr.end(); )
+    {
+        const auto id = sai_serialize_object_id(it->first);
+        if (m_vidToRidTable->hget("", id, value))
+        {
+            SWSS_LOG_INFO("Registering %s, id %s", it->second.c_str(), id.c_str());
+
+            std::unordered_set<std::string> counter_stats;
+            FlowCounterHandler::getGenericCounterIdList(counter_stats);
+            m_trap_counter_manager.setCounterIdList(it->first, CounterType::HOSTIF_TRAP, counter_stats);
+            it = m_pendingAddToFlexCntr.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+
+    if (m_pendingAddToFlexCntr.empty())
+    {
+        m_FlexCounterUpdTimer->stop();
+    }
+}
+
 void CoppOrch::getTrapAddandRemoveList(string trap_group_name,
                                        vector<sai_hostif_trap_type_t> &trap_ids,
                                        vector<sai_hostif_trap_type_t> &add_trap_ids,
@@ -820,7 +859,7 @@ bool CoppOrch::trapGroupProcessTrapIdChange (string trap_group_name,
             SWSS_LOG_ERROR("Failed to set traps to trap group %s", trap_group_name.c_str());
             return false;
         }
-        if (m_trap_group_hostif_map.find(m_trap_group_map[trap_group_name]) != 
+        if (m_trap_group_hostif_map.find(m_trap_group_map[trap_group_name]) !=
                                          m_trap_group_hostif_map.end())
         {
             if (!createGenetlinkHostIfTable(add_trap_ids))
@@ -839,7 +878,7 @@ bool CoppOrch::trapGroupProcessTrapIdChange (string trap_group_name,
                  * A trap ID will be present in rem_trap_id in two scenarios
                  * 1) When trap group for a trap ID is changed
                  * 2) When trap ID is completely removed
-                 * In case 1 the first call would be to add the trap ids to a different 
+                 * In case 1 the first call would be to add the trap ids to a different
                  * group. This would result in changing the mapping of trap id to trap group
                  * In case 2 the mapping will remain the same. In this case the trap
                  * object needs to be deleted
@@ -1139,7 +1178,7 @@ bool CoppOrch::removeTrap(sai_object_id_t hostif_trap_id)
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
-    
+
     return true;
 }
 
@@ -1152,7 +1191,7 @@ bool CoppOrch::bindTrapCounter(sai_object_id_t hostif_trap_id, sai_hostif_trap_t
         return false;
     }
 
-    if (m_trap_id_name_map.count(hostif_trap_id) > 0)
+    if (m_trap_obj_name_map.count(hostif_trap_id) > 0)
     {
         return true;
     }
@@ -1179,23 +1218,26 @@ bool CoppOrch::bindTrapCounter(sai_object_id_t hostif_trap_id, sai_hostif_trap_t
 
     // Update COUNTERS_TRAP_NAME_MAP
     auto trap_name = get_trap_name_by_type(trap_type);
-    FieldValueTuple tuple(trap_name, sai_serialize_object_id(counter_id));
-    vector<FieldValueTuple> fields;
-    fields.push_back(tuple);
-    m_counter_table->set("", fields);
+    vector<FieldValueTuple> nameMapFvs;
+    nameMapFvs.emplace_back(trap_name, sai_serialize_object_id(counter_id));
+    m_counter_table->set("", nameMapFvs);
 
-    // Update FLEX_COUNTER table
-    std::unordered_set<std::string> counter_stats;
-    FlowCounterHandler::getGenericCounterIdList(counter_stats);
-    m_trap_counter_manager.setCounterIdList(counter_id, CounterType::HOSTIF_TRAP, counter_stats);
-    m_trap_id_name_map.emplace(hostif_trap_id, trap_name);
+    auto was_empty = m_pendingAddToFlexCntr.empty();
+    m_pendingAddToFlexCntr[counter_id] = trap_name;
+
+    if (was_empty)
+    {
+        m_FlexCounterUpdTimer->start();
+    }
+
+    m_trap_obj_name_map.emplace(hostif_trap_id, trap_name);
     return true;
 }
 
 void CoppOrch::unbindTrapCounter(sai_object_id_t hostif_trap_id)
 {
-    auto iter = m_trap_id_name_map.find(hostif_trap_id);
-    if (iter == m_trap_id_name_map.end())
+    auto iter = m_trap_obj_name_map.find(hostif_trap_id);
+    if (iter == m_trap_obj_name_map.end())
     {
         return;
     }
@@ -1206,7 +1248,15 @@ void CoppOrch::unbindTrapCounter(sai_object_id_t hostif_trap_id)
     // Clear FLEX_COUNTER table
     sai_object_id_t counter_id;
     sai_deserialize_object_id(counter_oid_str, counter_id);
-    m_trap_counter_manager.clearCounterIdList(counter_id);
+    auto update_iter = m_pendingAddToFlexCntr.find(counter_id);
+    if (update_iter == m_pendingAddToFlexCntr.end())
+    {
+        m_trap_counter_manager.clearCounterIdList(counter_id);
+    }
+    else
+    {
+        m_pendingAddToFlexCntr.erase(update_iter);
+    }
 
     // Remmove trap from COUNTERS_TRAP_NAME_MAP
     m_counter_table->hdel("", iter->second);
@@ -1224,7 +1274,7 @@ void CoppOrch::unbindTrapCounter(sai_object_id_t hostif_trap_id)
     // Remove generic counter
     FlowCounterHandler::removeGenericCounter(counter_id);
 
-    m_trap_id_name_map.erase(iter);
+    m_trap_obj_name_map.erase(iter);
 }
 
 void CoppOrch::generateHostIfTrapCounterIdList()
