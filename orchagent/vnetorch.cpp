@@ -97,6 +97,7 @@ bool VNetVrfObject::createObj(vector<sai_attribute_t>& attrs)
                            vnet_name_.c_str(), status);
             throw std::runtime_error("Failed to create VR object");
         }
+        gRouteOrch->onAddVR(router_id);
         return true;
     };
 
@@ -315,6 +316,7 @@ VNetVrfObject::~VNetVrfObject()
             SWSS_LOG_ERROR("Failed to remove virtual router name: %s, rv:%d",
                             vnet_name_.c_str(), status);
         }
+        gRouteOrch->onRemoveVR(it);
     }
 
     SWSS_LOG_INFO("VNET '%s' deleted ", vnet_name_.c_str());
@@ -547,11 +549,45 @@ bool VNetOrch::delOperation(const Request& request)
     return true;
 }
 
+bool VNetOrch::getVrfIdByVnetName(const std::string& vnet_name, sai_object_id_t &vrf_id)
+{
+    if (!isVnetExists(vnet_name))
+    {
+        return false;
+    }
+
+    auto *vrf_obj = getTypePtr<VNetVrfObject>(vnet_name);
+    // Now we only support ingress VR for VNET, so just get ingress VR ID
+    // Once we support egress VR, need revisit here.
+    vrf_id = vrf_obj->getVRidIngress();
+    return vrf_id != SAI_NULL_OBJECT_ID;
+}
+
+bool VNetOrch::getVnetNameByVrfId(sai_object_id_t vrf_id, std::string& vnet_name)
+{
+    for (auto &entry : vnet_table_)
+    {
+        auto *vrf_obj = dynamic_cast<VNetVrfObject *>(entry.second.get());
+        if (!vrf_obj)
+        {
+            continue;
+        }
+
+        if (vrf_obj->getVRidIngress() == vrf_id)
+        {
+            vnet_name = entry.first;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 /*
  * Vnet Route Handling
  */
 
-static bool del_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx)
+static bool del_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, const IpPrefix& ipPrefix)
 {
     sai_route_entry_t route_entry;
     route_entry.vr_id = vr_id;
@@ -579,10 +615,12 @@ static bool del_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx)
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
     }
 
+    gRouteOrch->onRemoveOtherRouteEntry(vr_id, ipPrefix);
+
     return true;
 }
 
-static bool add_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object_id_t nh_id)
+static bool add_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object_id_t nh_id, const IpPrefix& ipPrefix)
 {
     sai_route_entry_t route_entry;
     route_entry.vr_id = vr_id;
@@ -609,6 +647,8 @@ static bool add_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object
     {
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
     }
+
+    gRouteOrch->onAddOtherRouteEntry(vr_id, ipPrefix);
 
     return true;
 }
@@ -812,7 +852,7 @@ bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey
 
 template<>
 bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipPrefix,
-                                               NextHopGroupKey& nexthops, string& op, 
+                                               NextHopGroupKey& nexthops, string& op,
                                                const map<NextHopKey, IpAddress>& monitors)
 {
     SWSS_LOG_ENTER();
@@ -889,7 +929,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                     // Remove route when updating from a nhg with active member to another nhg without
                     if (!syncd_nexthop_groups_[vnet][nhg].active_members.empty())
                     {
-                        del_route(vr_id, pfx);
+                        del_route(vr_id, pfx, ipPrefix);
                     }
                 }
             }
@@ -897,16 +937,16 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             {
                 if (it_route == syncd_tunnel_routes_[vnet].end())
                 {
-                    route_status = add_route(vr_id, pfx, nh_id);
+                    route_status = add_route(vr_id, pfx, nh_id, ipPrefix);
                 }
                 else
                 {
                     NextHopGroupKey nhg = it_route->second;
                     if (syncd_nexthop_groups_[vnet][nhg].active_members.empty())
                     {
-                        route_status = add_route(vr_id, pfx, nh_id);
-                    } 
-                    else 
+                        route_status = add_route(vr_id, pfx, nh_id, ipPrefix);
+                    }
+                    else
                     {
                         route_status = update_route(vr_id, pfx, nh_id);
                     }
@@ -974,7 +1014,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             // If an nhg has no active member, the route should already be removed
             if (!syncd_nexthop_groups_[vnet][nhg].active_members.empty())
             {
-                if (!del_route(vr_id, pfx))
+                if (!del_route(vr_id, pfx, ipPrefix))
                 {
                     SWSS_LOG_ERROR("Route del failed for %s, vr_id '0x%" PRIx64, ipPrefix.to_string().c_str(), vr_id);
                     return false;
@@ -1058,7 +1098,7 @@ bool VNetRouteOrch::updateTunnelRoute(const string& vnet, IpPrefix& ipPrefix,
         {
             bool route_status = true;
 
-            route_status = add_route(vr_id, pfx, nh_id);
+            route_status = add_route(vr_id, pfx, nh_id, ipPrefix);
 
             if (!route_status)
             {
@@ -1080,7 +1120,7 @@ bool VNetRouteOrch::updateTunnelRoute(const string& vnet, IpPrefix& ipPrefix,
 
         for (auto vr_id : vr_set)
         {
-            if (!del_route(vr_id, pfx))
+            if (!del_route(vr_id, pfx, ipPrefix))
             {
                 SWSS_LOG_ERROR("Route del failed for %s, vr_id '0x%" PRIx64, ipPrefix.to_string().c_str(), vr_id);
                 return false;
@@ -1193,12 +1233,12 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         {
             continue;
         }
-        if (op == SET_COMMAND && !add_route(vr_id, pfx, nh_id))
+        if (op == SET_COMMAND && !add_route(vr_id, pfx, nh_id, ipPrefix))
         {
             SWSS_LOG_INFO("Route add failed for %s", ipPrefix.to_string().c_str());
             break;
         }
-        else if (op == DEL_COMMAND && !del_route(vr_id, pfx))
+        else if (op == DEL_COMMAND && !del_route(vr_id, pfx, ipPrefix))
         {
             SWSS_LOG_INFO("Route del failed for %s", ipPrefix.to_string().c_str());
             break;
@@ -1249,7 +1289,7 @@ bool VNetRouteOrch::handleRoutes(const Request& request)
 
     SWSS_LOG_INFO("VNET-RT '%s' op '%s' for ip %s", vnet_name.c_str(),
                    op.c_str(), ip_pfx.to_string().c_str());
-              
+
     if (op == SET_COMMAND)
     {
         addRoute(vnet_name, ip_pfx, nh);
@@ -1303,7 +1343,7 @@ void VNetRouteOrch::attach(Observer* observer, const IpAddress& dstAddr)
                         dstAddr.to_string().c_str());
         for (auto vnetEntry : bestRoute->second)
         {
-            VNetNextHopUpdate update = 
+            VNetNextHopUpdate update =
             {
                 SET_COMMAND,
                 vnetEntry.first, // vnet name
@@ -1344,7 +1384,7 @@ void VNetRouteOrch::detach(Observer* observer, const IpAddress& dstAddr)
     {
         for (auto vnetEntry : bestRoute->second)
         {
-            VNetNextHopUpdate update = 
+            VNetNextHopUpdate update =
             {
                 DEL_COMMAND,
                 vnetEntry.first, // vnet name
@@ -1365,12 +1405,12 @@ void VNetRouteOrch::addRoute(const std::string& vnet, const IpPrefix& ipPrefix, 
     {
         if (ipPrefix.isAddressInSubnet(next_hop_observer.first))
         {
-            auto route_insert_result = next_hop_observer.second.routeTable.emplace(ipPrefix, VNetEntry());            
+            auto route_insert_result = next_hop_observer.second.routeTable.emplace(ipPrefix, VNetEntry());
 
             auto vnet_result_result = route_insert_result.first->second.emplace(vnet, nh);
             if (!vnet_result_result.second)
             {
-                if (vnet_result_result.first->second.ips == nh.ips 
+                if (vnet_result_result.first->second.ips == nh.ips
                     && vnet_result_result.first->second.ifname == nh.ifname)
                 {
                     continue;
@@ -1381,7 +1421,7 @@ void VNetRouteOrch::addRoute(const std::string& vnet, const IpPrefix& ipPrefix, 
             // If the inserted route is the best route. (Table should not be empty. Because we inserted a new entry above)
             if (route_insert_result.first == --next_hop_observer.second.routeTable.end())
             {
-                VNetNextHopUpdate update = 
+                VNetNextHopUpdate update =
                 {
                     SET_COMMAND,
                     vnet, // vnet name
@@ -1419,7 +1459,7 @@ void VNetRouteOrch::delRoute(const IpPrefix& ipPrefix)
             if ( itr == next_hop_observer->second.routeTable.end())
             {
                 SWSS_LOG_ERROR(
-                    "Failed to find any ip(%s) belong to this route(%s).", 
+                    "Failed to find any ip(%s) belong to this route(%s).",
                     next_hop_observer->first.to_string().c_str(),
                     ipPrefix.to_string().c_str());
                 assert(false);
@@ -1810,7 +1850,7 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         SWSS_LOG_ERROR("Peer monitor size of %zu does not match endpoint size of %zu", monitor_list.size(), ip_list.size());
         return false;
     }
-    
+
     const std::string& vnet_name = request.getKeyString(0);
     auto ip_pfx = request.getKeyIpPrefix(1);
     auto op = request.getOperation();

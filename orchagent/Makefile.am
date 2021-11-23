@@ -48,6 +48,7 @@ orchagent_SOURCES = \
             cbf/cbfnhgorch.cpp  \
             cbf/nhgmaporch.cpp \
             routeorch.cpp \
+            routeflowcounterorch.cpp \
             mplsrouteorch.cpp \
             neighorch.cpp \
             intfsorch.cpp \
