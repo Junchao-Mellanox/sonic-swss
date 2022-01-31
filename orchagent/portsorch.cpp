@@ -2225,50 +2225,52 @@ bool PortsOrch::addPort(const set<int> &lane_set, uint32_t speed, int an, string
 {
     SWSS_LOG_ENTER();
 
-    vector<uint32_t> lanes(lane_set.begin(), lane_set.end());
+    // vector<uint32_t> lanes(lane_set.begin(), lane_set.end());
 
-    sai_attribute_t attr;
-    vector<sai_attribute_t> attrs;
+    // sai_attribute_t attr;
+    // vector<sai_attribute_t> attrs;
 
-    attr.id = SAI_PORT_ATTR_SPEED;
-    attr.value.u32 = speed;
-    attrs.push_back(attr);
+    // attr.id = SAI_PORT_ATTR_SPEED;
+    // attr.value.u32 = speed;
+    // attrs.push_back(attr);
 
-    attr.id = SAI_PORT_ATTR_HW_LANE_LIST;
-    attr.value.u32list.list = lanes.data();
-    attr.value.u32list.count = static_cast<uint32_t>(lanes.size());
-    attrs.push_back(attr);
+    // attr.id = SAI_PORT_ATTR_HW_LANE_LIST;
+    // attr.value.u32list.list = lanes.data();
+    // attr.value.u32list.count = static_cast<uint32_t>(lanes.size());
+    // attrs.push_back(attr);
 
-    if (an == true)
-    {
-        attr.id = SAI_PORT_ATTR_AUTO_NEG_MODE;
-        attr.value.booldata = true;
-        attrs.push_back(attr);
-    }
+    // if (an == true)
+    // {
+    //     attr.id = SAI_PORT_ATTR_AUTO_NEG_MODE;
+    //     attr.value.booldata = true;
+    //     attrs.push_back(attr);
+    // }
 
-    if (!fec_mode.empty())
-    {
-        attr.id = SAI_PORT_ATTR_FEC_MODE;
-        attr.value.u32 = fec_mode_map[fec_mode];
-        attrs.push_back(attr);
-    }
+    // if (!fec_mode.empty())
+    // {
+    //     attr.id = SAI_PORT_ATTR_FEC_MODE;
+    //     attr.value.u32 = fec_mode_map[fec_mode];
+    //     attrs.push_back(attr);
+    // }
 
-    sai_object_id_t port_id;
-    sai_status_t status = sai_port_api->create_port(&port_id, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to create port with the speed %u, rv:%d", speed, status);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_PORT, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
-    }
+    // sai_object_id_t port_id;
+    // sai_status_t status = sai_port_api->create_port(&port_id, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
+    // if (status != SAI_STATUS_SUCCESS)
+    // {
+    //     SWSS_LOG_ERROR("Failed to create port with the speed %u, rv:%d", speed, status);
+    //     task_process_status handle_status = handleSaiCreateStatus(SAI_API_PORT, status);
+    //     if (handle_status != task_success)
+    //     {
+    //         return parseHandleSaiStatusFailure(handle_status);
+    //     }
+    // }
 
-    m_portListLaneMap[lane_set] = port_id;
+    SWSS_LOG_NOTICE("Not adding port to SAI - SN4800");
+
+    // m_portListLaneMap[lane_set] = port_id;
     m_portCount++;
 
-    SWSS_LOG_NOTICE("Create port %" PRIx64 " with the speed %u", port_id, speed);
+    // SWSS_LOG_NOTICE("Create port %" PRIx64 " with the speed %u", port_id, speed);
 
     return true;
 }
@@ -2277,29 +2279,30 @@ sai_status_t PortsOrch::removePort(sai_object_id_t port_id)
 {
     SWSS_LOG_ENTER();
 
-    Port port;
+    // Port port;
 
-    /*
-     * Make sure to bring down admin state.
-     * SET would have replaced with DEL
-     */
-    if (getPort(port_id, port))
-    {
-        setPortAdminStatus(port, false);
-    }
-    /* else : port is in default state or not yet created */
+    // /*
+    //  * Make sure to bring down admin state.
+    //  * SET would have replaced with DEL
+    //  */
+    // if (getPort(port_id, port))
+    // {
+    //     setPortAdminStatus(port, false);
+    // }
+    // /* else : port is in default state or not yet created */
 
-    sai_status_t status = sai_port_api->remove_port(port_id);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        return status;
-    }
+    // sai_status_t status = sai_port_api->remove_port(port_id);
+    // if (status != SAI_STATUS_SUCCESS)
+    // {
+    //     return status;
+    // }
 
     m_portCount--;
     m_portSupportedSpeeds.erase(port_id);
     SWSS_LOG_NOTICE("Remove port %" PRIx64, port_id);
 
-    return status;
+    // return status;
+    return SAI_STATUS_SUCCESS;
 }
 
 string PortsOrch::getQueueWatermarkFlexCounterTableKey(string key)
