@@ -10,7 +10,6 @@
 #include "flex_counter_stat_manager.h"
 #include "debug_counter.h"
 #include "drop_counter.h"
-#include "observer.h"
 
 extern "C" {
 #include "sai.h"
@@ -18,11 +17,9 @@ extern "C" {
 
 #define DEBUG_COUNTER_FLEX_COUNTER_GROUP "DEBUG_COUNTER"
 
-using DebugCounterMap = std::unordered_map<std::string, std::unique_ptr<DebugCounter>>;
-
 // DebugCounterOrch is an orchestrator for managing debug counters. It handles
 // the creation, deletion, and modification of debug counters.
-class DebugCounterOrch: public Orch, public Observer
+class DebugCounterOrch: public Orch
 {
 public:
     DebugCounterOrch(swss::DBConnector *db, const std::vector<std::string>& table_names, int poll_interval);
@@ -30,7 +27,6 @@ public:
 
     void doTask(Consumer& consumer);
 
-    void update(SubjectType, void *cntx);
 private:
     // Debug Capability Reporting Functions
     void publishDropCounterCapabilities();
@@ -52,12 +48,10 @@ private:
     CounterType getFlexCounterType(const std::string& counter_type) noexcept(false);
     void installDebugFlexCounters(
             const std::string& counter_type,
-            const std::string& counter_stat,
-            sai_object_id_t port_id = SAI_NULL_OBJECT_ID);
+            const std::string& counter_stat);
     void uninstallDebugFlexCounters(
             const std::string& counter_type,
-            const std::string& counter_stat,
-            sai_object_id_t port_id = SAI_NULL_OBJECT_ID);
+            const std::string& counter_stat);
 
     // Debug Counter Initialization Helper Functions
     std::string getDebugCounterType(
@@ -89,7 +83,7 @@ private:
 
     FlexCounterStatManager flex_counter_manager;
 
-    DebugCounterMap debug_counters;
+    std::unordered_map<std::string, std::unique_ptr<DebugCounter>> debug_counters;
 
     // free_drop_counters are drop counters that have been created by a user
     // that do not have any drop reasons associated with them yet. Because

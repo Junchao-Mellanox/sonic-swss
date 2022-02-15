@@ -2374,16 +2374,6 @@ bool PortsOrch::initPort(const string &alias, const string &role, const int inde
                     port_buffer_drop_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, port_buffer_drop_stats);
                 }
 
-                /* when a port is added and priority group map counter is enabled --> we need to add pg counter for it */
-                if (m_isPriorityGroupMapGenerated) {
-                    generatePriorityGroupMapPerPort(p);
-                }
-
-                /* when a port is added and queue map counter is enabled --> we need to add queue map counter for it */
-                if (m_isQueueMapGenerated) {
-                    generateQueueMapPerPort(p);
-                }
-
                 PortUpdate update = { p, true };
                 notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
 
@@ -2416,13 +2406,8 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
 {
     SWSS_LOG_ENTER();
 
-    Port p;
-
-    if (!getPort(port_id, p))
-    {
-        SWSS_LOG_ERROR("Failed to get port object for port id 0x%" PRIx64, port_id);
-        return;
-    }
+    Port p(alias, Port::PHY);
+    p.m_port_id = port_id;
 
     /* remove port from flex_counter_table for updating counters  */
     auto flex_counters_orch = gDirectory.get<FlexCounterOrch*>();
@@ -2430,23 +2415,15 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     {
         port_stat_manager.clearCounterIdList(p.m_port_id);
     }
+
     if (flex_counters_orch->getPortBufferDropCountersState())
     {
         port_buffer_drop_stat_manager.clearCounterIdList(p.m_port_id);
     }
 
-    /* remove pg port counters */
-    if (m_isPriorityGroupMapGenerated) {
-        removePriorityGroupMapPerPort(p);
-    }
-
-    /* remove queue port counters */
-    if (m_isQueueMapGenerated) {
-        removeQueueMapPerPort(p);
-    }
 
     /* remove port name map from counter table */
-    m_counterTable->del(alias);
+    m_counter_db->hdel(COUNTERS_PORT_NAME_MAP, alias);
 
     /* Remove the associated port serdes attribute */
     removePortSerdesAttribute(p.m_port_id);
@@ -4953,7 +4930,7 @@ bool PortsOrch::addLag(string lag_alias, uint32_t spa_id, int32_t switch_id)
     auto lagport = m_portList.find(lag_alias);
     if (lagport != m_portList.end())
     {
-        /* The deletion of bridgeport attached to the lag may still be
+        /* The deletion of bridgeport attached to the lag may still be 
          * pending due to fdb entries still present on the lag. Wait
          * until the cleanup is done.
          */
@@ -5417,44 +5394,6 @@ void PortsOrch::generateQueueMap()
     m_isQueueMapGenerated = true;
 }
 
-void PortsOrch::removeQueueMapPerPort(const Port& port)
-{
-    /* Remove the Queue map in the Counter DB */
-
-    for (size_t queueIndex = 0; queueIndex < port.m_queue_ids.size(); ++queueIndex)
-    {
-        std::ostringstream name;
-        name << port.m_alias << ":" << queueIndex;
-
-        const auto id = sai_serialize_object_id(port.m_queue_ids[queueIndex]);
-
-        m_queueTable->del(name.str());
-        m_queuePortTable->del(id);
-
-        string queueType;
-        uint8_t queueRealIndex = 0;
-        if (getQueueTypeAndIndex(port.m_queue_ids[queueIndex], queueType, queueRealIndex))
-        {
-            m_queueTypeTable->del(id);
-            m_queueIndexTable->del(id);
-        }
-
-        std::unordered_set<string> counter_stats;
-        for (const auto& it: queue_stat_ids)
-        {
-            counter_stats.emplace(sai_serialize_queue_stat(it));
-        }
-        queue_stat_manager.clearCounterIdList(port.m_queue_ids[queueIndex]);
-
-        /* remove watermark queue counters */
-        string key = getQueueWatermarkFlexCounterTableKey(id);
-
-        m_flexCounterTable->del(key);
-    }
-
-    CounterCheckOrch::getInstance().removePort(port);
-}
-
 void PortsOrch::generateQueueMapPerPort(const Port& port)
 {
     /* Create the Queue map in the Counter DB */
@@ -5531,35 +5470,6 @@ void PortsOrch::generatePriorityGroupMap()
     }
 
     m_isPriorityGroupMapGenerated = true;
-}
-
-void PortsOrch::removePriorityGroupMapPerPort(const Port& port)
-{
-    /* Remove the PG map in the Counter DB */
-    vector<string> pgVector;
-    vector<string> pgPortVector;
-    vector<string> pgIndexVector;
-
-    for (size_t pgIndex = 0; pgIndex < port.m_priority_group_ids.size(); ++pgIndex)
-    {
-        std::ostringstream name;
-        name << port.m_alias << ":" << pgIndex;
-
-        const auto id = sai_serialize_object_id(port.m_priority_group_ids[pgIndex]);
-        string key = getPriorityGroupWatermarkFlexCounterTableKey(id);
-
-        m_pgTable->del(name.str());
-        m_pgPortTable->del(id);
-        m_pgIndexTable->del(id);
-
-        m_flexCounterTable->del(key);
-
-        key = getPriorityGroupDropPacketsFlexCounterTableKey(id);
-        /* remove dropped packets counters to flex_counter */
-        m_flexCounterTable->del(key);
-    }
-
-    CounterCheckOrch::getInstance().removePort(port);
 }
 
 void PortsOrch::generatePriorityGroupMapPerPort(const Port& port)
