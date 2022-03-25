@@ -185,6 +185,12 @@ namespace routeorch_test
             ASSERT_EQ(gPortsOrch, nullptr);
             gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
 
+            static const  vector<string> route_pattern_tables = {
+                CFG_FLOW_COUNTER_ROUTE_PATTERN_TABLE_NAME,
+            };
+            gFlowCounterRouteOrch = new FlowCounterRouteOrch(m_config_db.get(), route_pattern_tables);
+            gDirectory.set(gFlowCounterRouteOrch);
+
             ASSERT_EQ(gVrfOrch, nullptr);
             gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME, m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
 
@@ -415,5 +421,19 @@ namespace routeorch_test
         ASSERT_EQ(current_remove_count, remove_route_count);
         ASSERT_EQ(current_set_count + 1, set_route_count);
         ASSERT_EQ(sai_fail_count, 0);
+    }
+
+    TEST_F(RouteOrchTest, RouteOrchTestSetDelSameNexthop)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        std::cout <<  "In RouteOrchTestSetDelSameNexthop +++++++++++++++++++++++" << std::endl;
+        // Setting route with same next hop but after a DEL in the same bulk
+        entries.push_back({"1.1.5.0/24", "SET", { {"ifname", "Ethernet0"},
+                                                  {"nexthop", "10.0.0.2"}}});
+        entries.push_back({"1.1.5.0/24", "DEL", { {} }});
+        auto consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        consumer->addToSync(entries);
+        
+        static_cast<Orch *>(gRouteOrch)->doTask();
     }
 }

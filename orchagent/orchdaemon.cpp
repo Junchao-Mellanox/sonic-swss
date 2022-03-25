@@ -52,6 +52,7 @@ CoppOrch *gCoppOrch;
 P4Orch *gP4Orch;
 BfdOrch *gBfdOrch;
 Srv6Orch *gSrv6Orch;
+FlowCounterRouteOrch *gFlowCounterRouteOrch;
 
 bool gIsNatSupported = false;
 
@@ -129,6 +130,13 @@ bool OrchDaemon::init()
     gFdbOrch = new FdbOrch(m_applDb, app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch);
     TableConnector stateDbBfdSessionTable(m_stateDb, STATE_BFD_SESSION_TABLE_NAME);
     gBfdOrch = new BfdOrch(m_applDb, APP_BFD_SESSION_TABLE_NAME, stateDbBfdSessionTable);
+
+    static const  vector<string> route_pattern_tables = {
+        CFG_FLOW_COUNTER_ROUTE_PATTERN_TABLE_NAME,
+    };
+    gFlowCounterRouteOrch = new FlowCounterRouteOrch(m_configDb, route_pattern_tables);
+    m_orchList.push_back(gFlowCounterRouteOrch);
+    gDirectory.set(gFlowCounterRouteOrch);
 
     vector<string> vnet_tables = {
             APP_VNET_RT_TABLE_NAME,
@@ -610,13 +618,6 @@ bool OrchDaemon::init()
     vector<string> p4rt_tables = {APP_P4RT_TABLE_NAME};
     gP4Orch = new P4Orch(m_applDb, p4rt_tables, vrf_orch, gCoppOrch);
     m_orchList.push_back(gP4Orch);
-
-    static const  vector<string> route_pattern_tables = {
-        CFG_FLOW_COUNTER_ROUTE_PATTERN_TABLE_NAME,
-    };
-    auto *route_flow_counter_orch = new RouteFlowCounterOrch(m_configDb, route_pattern_tables);
-    m_orchList.push_back(route_flow_counter_orch);
-    gDirectory.set(route_flow_counter_orch);
 
     if (WarmStart::isWarmStart())
     {

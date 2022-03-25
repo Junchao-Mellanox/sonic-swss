@@ -42,7 +42,6 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/orch.cpp \
                 $(top_srcdir)/orchagent/notifications.cpp \
                 $(top_srcdir)/orchagent/routeorch.cpp \
-                $(top_srcdir)/orchagent/routeflowcounterorch.cpp \
                 $(top_srcdir)/orchagent/mplsrouteorch.cpp \
                 $(top_srcdir)/orchagent/fgnhgorch.cpp \
                 $(top_srcdir)/orchagent/nhgbase.cpp \
@@ -91,7 +90,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/bfdorch.cpp \
                 $(top_srcdir)/orchagent/srv6orch.cpp
 
-tests_SOURCES += $(FLEX_CTR_DIR)/flex_counter_manager.cpp $(FLEX_CTR_DIR)/flex_counter_stat_manager.cpp $(FLEX_CTR_DIR)/flow_counter_handler.cpp
+tests_SOURCES += $(FLEX_CTR_DIR)/flex_counter_manager.cpp $(FLEX_CTR_DIR)/flex_counter_stat_manager.cpp $(FLEX_CTR_DIR)/flow_counter_handler.cpp $(FLEX_CTR_DIR)/flowcounterrouteorch.cpp
 tests_SOURCES += $(DEBUG_CTR_DIR)/debug_counter.cpp $(DEBUG_CTR_DIR)/drop_counter.cpp
 tests_SOURCES += $(P4_ORCH_DIR)/p4orch.cpp \
 		 $(P4_ORCH_DIR)/p4orch_util.cpp \
