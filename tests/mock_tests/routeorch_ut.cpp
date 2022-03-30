@@ -422,18 +422,4 @@ namespace routeorch_test
         ASSERT_EQ(current_set_count + 1, set_route_count);
         ASSERT_EQ(sai_fail_count, 0);
     }
-
-    TEST_F(RouteOrchTest, RouteOrchTestSetDelSameNexthop)
-    {
-        std::deque<KeyOpFieldsValuesTuple> entries;
-        std::cout <<  "In RouteOrchTestSetDelSameNexthop +++++++++++++++++++++++" << std::endl;
-        // Setting route with same next hop but after a DEL in the same bulk
-        entries.push_back({"1.1.5.0/24", "SET", { {"ifname", "Ethernet0"},
-                                                  {"nexthop", "10.0.0.2"}}});
-        entries.push_back({"1.1.5.0/24", "DEL", { {} }});
-        auto consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
-        consumer->addToSync(entries);
-        
-        static_cast<Orch *>(gRouteOrch)->doTask();
-    }
 }

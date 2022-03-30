@@ -119,7 +119,6 @@ class FlowCounterRouteOrch : public Orch
 public:
     FlowCounterRouteOrch(swss::DBConnector *db, const std::vector<std::string> &tableNames);
     virtual ~FlowCounterRouteOrch(void);
-    void doTask(Consumer &consumer) override;
 
     bool getRouteFlowCounterSupported() const { return mRouteFlowCounterSupported; }
     void generateRouteFlowStats();
@@ -135,6 +134,11 @@ public:
     void handleRouteAdd(sai_object_id_t vrf_id, const IpPrefix& ip_prefix);
     void handleRouteRemove(sai_object_id_t vrf_id, const IpPrefix& ip_prefix);
     void processRouteFlowCounterBinding();
+
+protected:
+    void doTask(Consumer &consumer) override;
+    void doTask(SelectableTimer &timer) override;
+
 private:
     std::shared_ptr<DBConnector> mAsicDb;
     std::shared_ptr<DBConnector> mCounterDb;
@@ -163,7 +167,6 @@ private:
 
     EntityBulker<sai_route_api_t> gRouteBulker;
 
-    void doTask(SelectableTimer &timer);
     void initRouteFlowCounterCapability();
     void removeRoutePattern(const RoutePattern &route_pattern);
     void removeRouteFlowCounterFromDB(sai_object_id_t vrf_id, const IpPrefix& ip_prefix, sai_object_id_t counter_oid);
