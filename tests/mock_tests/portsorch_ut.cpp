@@ -1671,4 +1671,72 @@ namespace portsorch_test
         ASSERT_FALSE(bridgePortCalledBeforeLagMember); // bridge port created on lag before lag member was created
     }
 
+    /**
+     * Test case: should not add a port to lag when there is a RIF attached to it
+     */
+    TEST_F(PortsOrchTest, addBridgePortOnRouterPort)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table lagTable = Table(m_app_db.get(), APP_LAG_TABLE_NAME);
+        Table lagMemberTable = Table(m_app_db.get(), APP_LAG_MEMBER_TABLE_NAME);
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        // Populate pot table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+
+        // Set PortConfigDone, PortInitDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { } });
+
+        lagTable.set("PortChannel0001",
+            {
+                {"admin_status", "up"},
+                {"mtu", "9100"}
+            }
+        );
+        lagMemberTable.set(
+            std::string("PortChannel0001") + lagMemberTable.getTableNameSeparator() + "Ethernet0",
+            { {"status", "enabled"} });
+
+        // Create port and lag
+        gPortsOrch->addExistingData(&portTable);
+        gPortsOrch->addExistingData(&lagTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Simulate a RIF attached to the port
+        Port port;
+        gPortsOrch->getPort("Ethernet0", port);
+        port.m_rif_id = 1;
+        gPortsOrch->setPort("Ethernet0", port);
+
+        // save original api since we will spy
+        auto orig_lag_api = sai_lag_api;
+        sai_lag_api = new sai_lag_api_t();
+        memcpy(sai_lag_api, orig_lag_api, sizeof(*sai_lag_api));
+
+        bool created_member = false;
+        auto lagSpy = SpyOn<SAI_API_LAG, SAI_OBJECT_TYPE_LAG_MEMBER>(&sai_lag_api->create_lag_member);
+        lagSpy->callFake([&](sai_object_id_t *oid, sai_object_id_t swoid, uint32_t count, const sai_attribute_t * attrs) -> sai_status_t {
+                created_member = true;
+                return orig_lag_api->create_lag_member(oid, swoid, count, attrs);
+            }
+        );
+
+        // Try add port to lag
+        gPortsOrch->addExistingData(&lagMemberTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        ASSERT_FALSE(created_member);
+    }
+
 }
