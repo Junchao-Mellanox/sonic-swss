@@ -1674,7 +1674,7 @@ namespace portsorch_test
     /**
      * Test case: should not add a port to lag when there is a RIF attached to it
      */
-    TEST_F(PortsOrchTest, addBridgePortOnRouterPort)
+    TEST_F(PortsOrchTest, addRoutePortToLag)
     {
         Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
         Table lagTable = Table(m_app_db.get(), APP_LAG_TABLE_NAME);
