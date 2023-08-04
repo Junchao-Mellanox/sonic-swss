@@ -6087,6 +6087,12 @@ void PortsOrch::getLagMember(Port &lag, vector<Port> &portv)
 bool PortsOrch::addLagMember(Port &lag, Port &port, string member_status)
 {
     SWSS_LOG_ENTER();
+    if (port.m_rif_id == 0)
+    {
+        SWSS_LOG_NOTICE("Port %s cannot be added to LAG because it has a RIF attached to it, retrying...", port.m_alias.c_str());
+        return false;
+    }
+
     bool enableForwarding = (member_status == "enabled");
 
     sai_uint32_t pvid;
