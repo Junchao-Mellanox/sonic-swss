@@ -64,7 +64,7 @@ MonitorOrch *gMonitorOrch;
 bool gIsNatSupported = false;
 event_handle_t g_events_handle;
 
-#define DEFAULT_MAX_BULK_SIZE 1000
+#define DEFAULT_MAX_BULK_SIZE 25600
 size_t gMaxBulkSize = DEFAULT_MAX_BULK_SIZE;
 
 OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *chassisAppDb, ZmqServer *zmqServer) :
