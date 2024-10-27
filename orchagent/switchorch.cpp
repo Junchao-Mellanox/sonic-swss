@@ -126,6 +126,7 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
         m_stateDbForNotification(new DBConnector(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
         m_asicSdkHealthEventTable(new Table(m_stateDbForNotification.get(), STATE_ASIC_SDK_HEALTH_EVENT_TABLE_NAME))
 {
+    SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- SwitchOrch::SwitchOrch --- Entered SwitchOrch::SwitchOrch");
     m_restartCheckNotificationConsumer = new NotificationConsumer(db, "RESTARTCHECK");
     auto restartCheckNotifier = new Notifier(m_restartCheckNotificationConsumer, this, "RESTARTCHECK");
     Orch::addExecutor(restartCheckNotifier);
@@ -1057,6 +1058,7 @@ void SwitchOrch::doTask(Consumer &consumer)
 
 void SwitchOrch::doTask(NotificationConsumer& consumer)
 {
+    SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- SwitchOrch::doTask --- Entered function SwitchOrch::doTask");
     SWSS_LOG_ENTER();
 
     std::string op;
@@ -1065,8 +1067,13 @@ void SwitchOrch::doTask(NotificationConsumer& consumer)
 
     consumer.pop(op, data, values);
 
+    SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- SwitchOrch::doTask --- consumer.pop(op, data, values)");
+    SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- SwitchOrch::doTask --- op = %s,    data = %s", op.c_str(), data.c_str());
+
     if (&consumer != m_restartCheckNotificationConsumer)
     {
+        SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- SwitchOrch::doTask --- Entered  if (&consumer != m_restartCheckNotificationConsumer)");
+        SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- SwitchOrch::doTask --- Returning");
         return;
     }
 
@@ -1077,31 +1084,46 @@ void SwitchOrch::doTask(NotificationConsumer& consumer)
     SWSS_LOG_NOTICE("RESTARTCHECK notification for %s ", op.c_str());
     if (op == "orchagent")
     {
+        SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- SwitchOrch::doTask --- Entered  if (op == \"orchagent\")");
         string s  =  op;
 
         m_warmRestartCheck.checkRestartReadyState = true;
+        SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- SwitchOrch::doTask --- setting m_warmRestartCheck.checkRestartReadyState = true");
+
+        SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- SwitchOrch::doTask --- Going over values vector:");
         for (auto &i : values)
         {
+            SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- SwitchOrch::doTask --- <%s,%s>", fvField(i).c_str(), fvValue(i).c_str());
             s += "|" + fvField(i) + ":" + fvValue(i);
 
             if (fvField(i) == "NoFreeze" && fvValue(i) == "true")
             {
+                SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- SwitchOrch::doTask --- setting m_warmRestartCheck.noFreeze = true;");
                 m_warmRestartCheck.noFreeze = true;
             }
             if (fvField(i) == "SkipPendingTaskCheck" && fvValue(i) == "true")
             {
+                SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- SwitchOrch::doTask --- setting m_warmRestartCheck.skipPendingTaskCheck = true;");
                 m_warmRestartCheck.skipPendingTaskCheck = true;
             }
         }
+        SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- SwitchOrch::doTask --- final s = %s", s.c_str());
         SWSS_LOG_NOTICE("%s", s.c_str());
     }
 }
 
 void SwitchOrch::restartCheckReply(const string &op, const string &data, std::vector<FieldValueTuple> &values)
 {
+    SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- SwitchOrch::restartCheckReply --- Entered function SwitchOrch::restartCheckReply");
     NotificationProducer restartRequestReply(m_db, "RESTARTCHECKREPLY");
+    SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- SwitchOrch::restartCheckReply --- Before restartRequestReply.send(op, data, values)");
     restartRequestReply.send(op, data, values);
+    SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- SwitchOrch::restartCheckReply --- After restartRequestReply.send(op, data, values)");
+    SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- SwitchOrch::restartCheckReply --- before checkRestartReadyDone();");
+    SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- SwitchOrch::restartCheckReply --- setting: m_warmRestartCheck.checkRestartReadyState = false;");
     checkRestartReadyDone();
+    SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- SwitchOrch::restartCheckReply --- after checkRestartReadyDone();");
+    SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- SwitchOrch::restartCheckReply --- Leaving function restartCheckReply");
 }
 
 void SwitchOrch::onSwitchAsicSdkHealthEvent(sai_object_id_t switch_id,

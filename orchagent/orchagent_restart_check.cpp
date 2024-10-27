@@ -125,14 +125,29 @@ int main(int argc, char **argv)
     while (retries <= retryCount)
     {
         SWSS_LOG_NOTICE("requested %s to do warm restart state check, retry count: %d", op.c_str(), retries);
-        restartQuery.send(op, op, values);
+        SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- orchagent_restart_check --- retry count: %d", retries);
+
+        //restartQuery.send(op, op, values);
+        SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- orchagent_restart_check --- before send");
+        long long send_res = restartQuery.send(op, op, values);
+        SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- orchagent_restart_check --- send resulst = %lld", send_res);
+        SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- orchagent_restart_check --- after send");
 
         std::string op_ret, data;
         std::vector<swss::FieldValueTuple> values_ret;
+
+        SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- orchagent_restart_check --- before select");
         int result = s.select(&sel, waitTime);
+        SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- orchagent_restart_check --- select resulst = %d", result);
+        SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- orchagent_restart_check --- after select");
+
         if (result == swss::Select::OBJECT)
         {
+            SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- orchagent_restart_check --- before pop");
             restartQueryReply.pop(op_ret, data, values_ret);
+            SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- orchagent_restart_check --- after after");
+
+            SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- orchagent_restart_check --- data = %s   ,    op_ret = %s", data.c_str(), op_ret.c_str());
             if (data == "READY")
             {
                 SWSS_LOG_NOTICE("RESTARTCHECK success, %s is frozen and ready for warm restart", op_ret.c_str());
@@ -147,6 +162,7 @@ int main(int argc, char **argv)
         }
         else if (result == swss::Select::TIMEOUT)
         {
+            SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- orchagent_restart_check --- TIMED OUT");
             SWSS_LOG_NOTICE("RESTARTCHECK for %s timed out", op_ret.c_str());
         }
         else

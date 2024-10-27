@@ -815,6 +815,7 @@ void OrchDaemon::logRotate() {
 void OrchDaemon::start()
 {
     SWSS_LOG_ENTER();
+    SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- OrchDaemon::start --- Entered function OrchDaemon::start");
 
     Recorder::Instance().sairedis.setRotate(false);
 
@@ -825,6 +826,7 @@ void OrchDaemon::start()
 
     auto tstart = std::chrono::high_resolution_clock::now();
 
+    SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- OrchDaemon::start --- Starting infinite loop while(true)");
     while (true)
     {
         Selectable *s;
@@ -879,6 +881,7 @@ void OrchDaemon::start()
         for (Orch *o : m_orchList)
             o->doTask();
 
+        SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- OrchDaemon::start --- Before if(checkRestartReady)");
         /*
          * Asked to check warm restart readiness.
          * Not doing this under Select::TIMEOUT condition because of
@@ -886,31 +889,48 @@ void OrchDaemon::start()
          */
         if (gSwitchOrch && gSwitchOrch->checkRestartReady())
         {
+            SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- OrchDaemon::start --- entered  if (gSwitchOrch && gSwitchOrch->checkRestartReady())");
+            SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- OrchDaemon::start --- before call to warmRestartCheck()");
             bool ret = warmRestartCheck();
+            SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- OrchDaemon::start --- after call to warmRestartCheck()");
+
+            SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- OrchDaemon::start --- ret = %d", ret);
             if (ret)
             {
+                SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- OrchDaemon::start --- entered  if (ret)");
                 // Orchagent is ready to perform warm restart, stop processing any new db data.
                 // Should sleep here or continue handling timers and etc.??
                 if (!gSwitchOrch->checkRestartNoFreeze())
                 {
+                    SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- OrchDaemon::start --- entered  if (!gSwitchOrch->checkRestartNoFreeze())");
                     // Disable FDB aging
+                    SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- OrchDaemon::start --- before gSwitchOrch->setAgingFDB(0);");
                     gSwitchOrch->setAgingFDB(0);
+                    SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- OrchDaemon::start --- after gSwitchOrch->setAgingFDB(0);");
 
                     // Disable FDB learning on all bridge ports
                     if (gPortsOrch)
                     {
+                        SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- OrchDaemon::start --- entered  if (gPortsOrch)");
                         for (auto& pair: gPortsOrch->getAllPorts())
                         {
                             auto& port = pair.second;
+                            SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- OrchDaemon::start --- before gPortsOrch->setBridgePortLearningFDB(port, SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE)");
                             gPortsOrch->setBridgePortLearningFDB(port, SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE);
+                            SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- OrchDaemon::start --- after gPortsOrch->setBridgePortLearningFDB(port, SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE)");
                         }
                     }
 
                     // Flush sairedis's redis pipeline
+                    SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- OrchDaemon::start --- before flush();");
                     flush();
+                    SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- OrchDaemon::start --- after flush();");
 
                     SWSS_LOG_WARN("Orchagent is frozen for warm restart!");
+                    SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- OrchDaemon::start --- Orchagent is frozen for warm restart!");
+                    SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- OrchDaemon::start --- before freezeAndHeartBeat(UINT_MAX);");
                     freezeAndHeartBeat(UINT_MAX);
+                    SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- OrchDaemon::start --- after freezeAndHeartBeat(UINT_MAX);");
                 }
             }
         }
@@ -1031,6 +1051,7 @@ bool OrchDaemon::warmRestoreValidation()
  */
 bool OrchDaemon::warmRestartCheck()
 {
+    SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- OrchDaemon::warmRestartCheck --- Entered OrchDaemon::warmRestartCheck");
     std::vector<swss::FieldValueTuple> values;
     std::string op = "orchagent";
     std::string data = "READY";
@@ -1041,23 +1062,30 @@ bool OrchDaemon::warmRestartCheck()
 
     if (ts.size() != 0)
     {
+        SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- OrchDaemon::warmRestartCheck --- Entered  if (ts.size() != 0)");
         SWSS_LOG_NOTICE("WarmRestart check found pending tasks: ");
+        SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- OrchDaemon::warmRestartCheck --- WarmRestart check found pending tasks: ");
         for(auto &s : ts)
         {
+            SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- OrchDaemon::warmRestartCheck --- %s", s.c_str());
             SWSS_LOG_NOTICE("    %s", s.c_str());
         }
         if (!gSwitchOrch->skipPendingTaskCheck())
         {
+            SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- OrchDaemon::warmRestartCheck --- Entered  if (!gSwitchOrch->skipPendingTaskCheck())");
+            SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- OrchDaemon::warmRestartCheck --- setting data = \"NOT_READY\", ret = false");
             data = "NOT_READY";
             ret = false;
         }
         else
         {
+            SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- OrchDaemon::warmRestartCheck --- Orchagent objects dependency check skipped");
             SWSS_LOG_NOTICE("Orchagent objects dependency check skipped");
         }
     }
 
     SWSS_LOG_NOTICE("Restart check result: %s", data.c_str());
+    SWSS_LOG_NOTICE("--- RESTARTCHECK_failed_debug --- OrchDaemon::warmRestartCheck --- Restart check result: data = %s", data.c_str());
     gSwitchOrch->restartCheckReply(op,  data, values);
     return ret;
 }
