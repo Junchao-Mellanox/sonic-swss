@@ -295,6 +295,7 @@ namespace flexcounter_test
                 CFG_FLEX_COUNTER_TABLE_NAME
             };
             auto* flexCounterOrch = new FlexCounterOrch(m_config_db.get(), flex_counter_tables);
+            flexCounterOrch->m_delayTimerExpired = true;
             gDirectory.set(flexCounterOrch);
 
             vector<string> buffer_tables = { APP_BUFFER_POOL_TABLE_NAME,
