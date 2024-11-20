@@ -27,8 +27,6 @@ extern CoppOrch *gCoppOrch;
 extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
 extern sai_object_id_t gSwitchId;
 
-#define FLEX_COUNTER_DELAY_SEC 60
-
 #define BUFFER_POOL_WATERMARK_KEY   "BUFFER_POOL_WATERMARK"
 #define PORT_KEY                    "PORT"
 #define PORT_BUFFER_DROP_KEY        "PORT_BUFFER_DROP"
@@ -73,10 +71,6 @@ FlexCounterOrch::FlexCounterOrch(DBConnector *db, vector<string> &tableNames):
     m_deviceMetadataConfigTable(db, CFG_DEVICE_METADATA_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
-    m_delayTimer = new SelectableTimer(timespec{.tv_sec = FLEX_COUNTER_DELAY_SEC, .tv_nsec = 0});
-    auto executor = new ExecutableTimer(m_delayTimer, this, "FLEX_COUNTER_DELAY");
-    Orch::addExecutor(executor);
-    m_delayTimer->start();
 }
 
 FlexCounterOrch::~FlexCounterOrch(void)
@@ -87,11 +81,6 @@ FlexCounterOrch::~FlexCounterOrch(void)
 void FlexCounterOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
-
-    if (!m_delayTimerExpired)
-    {
-        return;
-    }
 
     VxlanTunnelOrch* vxlan_tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
     if (gPortsOrch && !gPortsOrch->allPortsReady())
@@ -252,15 +241,6 @@ void FlexCounterOrch::doTask(Consumer &consumer)
 
         consumer.m_toSync.erase(it++);
     }
-}
-
-void FlexCounterOrch::doTask(SelectableTimer &timer)
-{
-    SWSS_LOG_ENTER();
-
-    SWSS_LOG_NOTICE("Processing counters");
-    m_delayTimer->stop();
-    m_delayTimerExpired = true;
 }
 
 bool FlexCounterOrch::getPortCountersState() const

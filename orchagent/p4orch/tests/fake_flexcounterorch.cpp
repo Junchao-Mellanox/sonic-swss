@@ -16,10 +16,6 @@ void FlexCounterOrch::doTask(Consumer &consumer)
 {
 }
 
-void FlexCounterOrch::doTask(SelectableTimer &timer)
-{
-}
-
 bool FlexCounterOrch::getPortCountersState() const
 {
     return true;
